@@ -78,6 +78,13 @@ class AgentResponse(BaseModel):
             "official agency) must make the final decision."
         ),
     )
+    used_fallback: bool = Field(
+        default=False,
+        description=(
+            "True when the agent fell back to rule-based output because the LLM "
+            "was unavailable. Internal use only; never shown raw to the user."
+        ),
+    )
 
 
 class FinalDecision(BaseModel):

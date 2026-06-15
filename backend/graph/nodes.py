@@ -88,10 +88,13 @@ def node_benefits(state: PipelineState) -> PipelineState:
     Run the Benefits Navigator Agent.
 
     Appends to: agent_responses.
-    Reads: event.
+    Reads: event, evidence_items (passed as supporting context to the LLM).
     """
-    resp = _benefits.run(state["event"])
-    logger.debug("node_benefits | confidence=%.2f", resp.confidence)
+    resp = _benefits.run(state["event"], evidence_items=state.get("evidence_items", []))
+    if resp.used_fallback:
+        logger.warning("node_benefits | LLM unavailable — rule-based fallback response used")
+    else:
+        logger.debug("node_benefits | confidence=%.2f", resp.confidence)
     return {
         **state,
         "agent_responses": [*state.get("agent_responses", []), resp],
