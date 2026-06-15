@@ -1,0 +1,1 @@
+# ElderBridge GuardianOS — agent package
