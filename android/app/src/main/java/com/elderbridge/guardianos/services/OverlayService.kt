@@ -209,11 +209,12 @@ class OverlayService : Service() {
                 // SECURITY: snapshot.redactedText originates from ScreenContentHolder,
                 // which ScreenReaderService writes only after RedactionEngine.redact().
                 // No raw screen text ever reaches this payload.
+                val isoTimestamp = java.time.Instant.ofEpochMilli(snapshot.capturedAtMs).toString()
                 val event = IncomingEvent(
                     eventType = "FORM_SCREEN",
                     sourceApp = snapshot.sourcePackage,
                     redactedText = snapshot.redactedText,
-                    timestampMs = snapshot.capturedAtMs,
+                    timestamp = isoTimestamp,
                     userId = PLACEHOLDER_USER_ID
                 )
 
