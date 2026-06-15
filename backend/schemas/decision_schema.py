@@ -4,7 +4,12 @@ from pydantic import BaseModel, Field
 
 
 class RiskLevel(str, Enum):
-    """Decision levels from the ensemble engine (AI_AGENTS.md §17)."""
+    """Decision levels from the ensemble engine (AI_AGENTS.md §17).
+
+    NONE is below SILENT — used when an event is fully benign and no guidance
+    is needed beyond the app being ready to help.
+    """
+    NONE = "none"
     SILENT = "silent"
     SOFT_HELP = "soft_help"
     CAUTION = "caution"
