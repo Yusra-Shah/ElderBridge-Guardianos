@@ -44,7 +44,7 @@ fun PermissionsScreen(onContinue: () -> Unit) {
     // refreshKey increments when user taps "Check again" after returning from Settings
     var refreshKey by remember { mutableIntStateOf(0) }
 
-    val hasAccessibility = remember(refreshKey) { isAccessibilityEnabled(context) }
+    val hasAccessibility = remember(refreshKey) { isScreenReaderEnabled(context) }
     val hasNotificationAccess = remember(refreshKey) { isNotificationAccessEnabled(context) }
     val hasOverlay = remember(refreshKey) { Settings.canDrawOverlays(context) }
 
@@ -205,12 +205,25 @@ private fun GrantedChip(isGranted: Boolean) {
     }
 }
 
-private fun isAccessibilityEnabled(context: Context): Boolean {
+/**
+ * Returns true only when ScreenReaderService specifically is listed in the enabled
+ * accessibility services setting. Checking the full component name avoids false
+ * positives from other accessibility services the user may have enabled from this package.
+ *
+ * The setting stores entries as "pkg/ComponentClass" separated by ":", in either
+ * short (pkg/.ClassName) or long (pkg/pkg.ClassName) form.
+ */
+private fun isScreenReaderEnabled(context: Context): Boolean {
     val enabled = Settings.Secure.getString(
         context.contentResolver,
         Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
     ) ?: return false
-    return enabled.contains(context.packageName, ignoreCase = true)
+    return enabled.split(':').any { entry ->
+        val parts = entry.trim().split('/')
+        parts.size == 2 &&
+            parts[0].equals(context.packageName, ignoreCase = true) &&
+            parts[1].contains("ScreenReaderService", ignoreCase = true)
+    }
 }
 
 private fun isNotificationAccessEnabled(context: Context): Boolean {

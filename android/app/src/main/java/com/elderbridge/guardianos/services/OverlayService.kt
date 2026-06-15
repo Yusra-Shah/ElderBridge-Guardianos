@@ -15,6 +15,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.elderbridge.guardianos.redaction.ScreenContentHolder
 
 class OverlayService : Service() {
 
@@ -22,11 +23,6 @@ class OverlayService : Service() {
     private var bubbleView: View? = null
     private var expandedCard: View? = null
     private var isBubbleExpanded = false
-
-    // Hardcoded mock response — real AI response will replace this in a later milestone
-    private val mockResponse =
-        "This form is asking for your monthly income from Social Security or any pension. " +
-        "Enter the total amount you receive each month before any deductions."
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -128,14 +124,25 @@ class OverlayService : Service() {
             background = roundedDrawable(Color.parseColor("#003C8F"), 16 * dp)
         }
 
+        val snapshot = ScreenContentHolder.get()
+        val headerLabel: String
+        val bodyText: String
+        if (snapshot == null || snapshot.redactedText.isBlank()) {
+            headerLabel = "Not ready yet"
+            bodyText = "Open a form or message, then tap me again."
+        } else {
+            headerLabel = "What I can see on screen:"
+            bodyText = snapshot.redactedText
+        }
+
         card.addView(TextView(this).apply {
-            text = "ElderBridge says:"
+            text = headerLabel
             textSize = 13f
             setTextColor(Color.parseColor("#5E92F3"))
             setPadding(0, 0, 0, (10 * dp).toInt())
         })
         card.addView(TextView(this).apply {
-            text = mockResponse
+            text = bodyText
             textSize = 17f
             setTextColor(Color.WHITE)
             setPadding(0, 0, 0, (20 * dp).toInt())

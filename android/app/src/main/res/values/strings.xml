@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ElderBridge GuardianOS</string>
+    <string name="accessibility_service_description">ElderBridge reads the text on your screen so it can explain forms, letters, and benefits in plain language. No information leaves your phone.</string>
 </resources>
