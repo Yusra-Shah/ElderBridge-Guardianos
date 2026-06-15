@@ -199,7 +199,21 @@ def _compute_baseline(event: IncomingEvent) -> tuple[RiskLevel, str, list[str]]:
 
 
 # ---------------------------------------------------------------------------
-# Public pipeline entry point
+# Public exports (used by graph/nodes.py to avoid duplicating baseline logic)
+# ---------------------------------------------------------------------------
+
+def compute_baseline(event: IncomingEvent) -> tuple[RiskLevel, str, list[str]]:
+    """
+    Public wrapper around the private _compute_baseline for use by graph nodes.
+
+    Returns (risk_level, response_text, next_steps).
+    Kept here so the single source of truth for keyword rules stays in orchestrator.py.
+    """
+    return _compute_baseline(event)
+
+
+# ---------------------------------------------------------------------------
+# Public pipeline entry point (kept as fallback / reference implementation)
 # ---------------------------------------------------------------------------
 
 def run_pipeline(event: IncomingEvent) -> FinalDecision:

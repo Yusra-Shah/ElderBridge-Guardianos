@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
-from orchestrator import run_pipeline
+from graph.build_graph import run_graph
 from schemas.decision_schema import FinalDecision
 from schemas.event_schema import IncomingEvent
 
@@ -34,7 +34,7 @@ app = FastAPI(
         "Privacy-first AI decision backend for the ElderBridge Android companion. "
         "Receives redacted device events and returns plain-language guidance."
     ),
-    version="0.2.0",
+    version="0.3.0",
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -80,8 +80,8 @@ async def analyze_event(event: IncomingEvent) -> FinalDecision:
     before sending.  The backend applies an additional keyword check via the
     GuardrailAgent as defence-in-depth (SECURITY_MODEL.md §3, Threat 1).
 
-    The full pipeline is:
-      RouterAgent → Specialists → CriticAgent → GuardrailAgent → FinalDecision
+    The full pipeline (LangGraph-style graph):
+      baseline → router → [fan-out: specialists] → critic → guardrail → FinalDecision
 
     Returns a FinalDecision with a risk_flag, plain-language response_text,
     and ordered next_steps.
@@ -101,4 +101,4 @@ async def analyze_event(event: IncomingEvent) -> FinalDecision:
         # log-based data retention surface (SECURITY_MODEL.md §9).
     )
 
-    return run_pipeline(event)
+    return run_graph(event)
