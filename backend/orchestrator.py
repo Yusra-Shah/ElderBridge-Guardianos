@@ -28,7 +28,7 @@ from agents.form_agent import FormAgent
 from agents.guardrail_agent import GuardrailAgent
 from agents.research_agent import ResearchAgent
 from agents.router_agent import RouterAgent
-from schemas.decision_schema import AgentResponse, FinalDecision, RiskLevel
+from schemas.decision_schema import AgentResponse, EvidenceItem, FinalDecision, RiskLevel
 from schemas.event_schema import EventType, IncomingEvent
 
 logger = logging.getLogger("elderbridge.orchestrator")
@@ -274,21 +274,24 @@ def run_pipeline(event: IncomingEvent) -> FinalDecision:
         )
 
     # ── Step 6: Assemble final decision ─────────────────────────────────────
-    # Collect any sources from specialists (will be non-empty once RAG is live)
-    all_sources: list[str] = []
+    # Collect EvidenceItems from all specialist agents, deduplicated by source_id.
+    all_evidence: list[EvidenceItem] = []
+    seen_source_ids: set[str] = set()
     for resp in specialist_responses:
-        all_sources.extend(resp.sources)
-    all_sources = list(dict.fromkeys(all_sources))  # deduplicate, preserve order
+        for item in resp.evidence_items:
+            if item.source_id not in seen_source_ids:
+                seen_source_ids.add(item.source_id)
+                all_evidence.append(item)
 
     logger.debug(
-        "pipeline complete | risk_flag=%s sources=%d",
+        "pipeline complete | risk_flag=%s evidence_items=%d",
         risk_flag.value,
-        len(all_sources),
+        len(all_evidence),
     )
 
     return FinalDecision(
         response_text=response_text,
         risk_flag=risk_flag,
         next_steps=next_steps,
-        source_citations=all_sources,
+        source_citations=all_evidence,
     )

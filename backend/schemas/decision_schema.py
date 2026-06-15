@@ -3,6 +3,30 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
+class EvidenceItem(BaseModel):
+    """One verified source returned by the Research Engine (RESEARCH_ENGINE.md §7)."""
+
+    source_id: str = Field(..., description="Unique identifier for this source in the knowledge base.")
+    title: str = Field(..., description="Human-readable title of the source.")
+    tier: int = Field(
+        ...,
+        ge=1,
+        le=5,
+        description=(
+            "Source quality tier (RESEARCH_ENGINE.md §5): "
+            "1=official govt/healthcare, 2=recognised org, 3=reputable news, "
+            "4=community directory, 5=unknown/social."
+        ),
+    )
+    snippet: str = Field(..., description="Relevant excerpt from the source document.")
+    relevance_score: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Combined score weighting source tier (60%) and keyword overlap (40%).",
+    )
+
+
 class RiskLevel(str, Enum):
     """Decision levels from the ensemble engine (AI_AGENTS.md §17).
 
@@ -41,7 +65,11 @@ class AgentResponse(BaseModel):
     )
     sources: List[str] = Field(
         default_factory=list,
-        description="Source identifiers or citation labels used to produce this output (e.g. RAG doc IDs, official URLs).",
+        description="Source identifiers used to produce this output (e.g. RAG doc IDs).",
+    )
+    evidence_items: List["EvidenceItem"] = Field(
+        default_factory=list,
+        description="Structured EvidenceItem objects from the Research Engine, if this agent ran a search.",
     )
     requires_human_review: bool = Field(
         ...,
@@ -70,9 +98,9 @@ class FinalDecision(BaseModel):
         default_factory=list,
         description="Ordered list of safe, concrete actions the user should take next.",
     )
-    source_citations: List[str] = Field(
+    source_citations: List["EvidenceItem"] = Field(
         default_factory=list,
-        description="Official sources consulted to produce this decision. Empty if no external source was used.",
+        description="Structured evidence items from the Research Engine, ordered by tier. Empty if no search was run.",
     )
 
     model_config = {

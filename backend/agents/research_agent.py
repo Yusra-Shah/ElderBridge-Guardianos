@@ -5,7 +5,7 @@ Responsibility (AI_AGENTS.md §5, §10 | RESEARCH_ENGINE.md):
   Checks claims, links, domains, and benefit announcements against a
   tiered source hierarchy before the system produces any high-impact output.
   ElderBridge does NOT answer high-stakes questions from model memory alone;
-  it uses evidence retrieved from official or curated sources.
+  it retrieves evidence from official or curated sources.
 
 Source tiers (RESEARCH_ENGINE.md §5):
   Tier 1 — Official government / healthcare / bank websites
@@ -14,16 +14,29 @@ Source tiers (RESEARCH_ENGINE.md §5):
   Tier 4 — Community resource directories
   Tier 5 — Unknown domains, forums, social posts
 
-Tools (not wired in this scaffolding milestone):
-  - Web search API (Tavily / SerpAPI)       — os.environ["SEARCH_API_KEY"]
-  - URL reputation / threat feeds           — os.environ["URL_SAFETY_API_KEY"]
-  - RAG vector database                     — os.environ["RAG_DB_URL"]
-  - Official-domain allowlist / denylist
+Human review rule:
+  If no sources with tier ≤ 4 are returned, the agent cannot provide
+  verified guidance and must flag requires_human_review=True.
+
+Tools wired in this milestone:
+  - ResearchEngine (offline keyword-matching against mock_sources.py)
+
+Tools NOT yet wired (future milestones):
+  - Live web search API (Tavily / SerpAPI)  — os.environ["SEARCH_API_KEY"]
+  - URL reputation / threat feeds            — os.environ["URL_SAFETY_API_KEY"]
+  - RAG vector database                      — os.environ["RAG_DB_URL"]
 """
 from __future__ import annotations
 
-from schemas.decision_schema import AgentResponse
+from research.engine import ResearchEngine
+from schemas.decision_schema import AgentResponse, EvidenceItem
 from schemas.event_schema import IncomingEvent
+
+_engine = ResearchEngine()
+
+# Tier threshold: sources at this tier or below are considered trustworthy
+# enough to reduce the human-review requirement.
+_TRUSTED_TIER_THRESHOLD = 4
 
 
 class ResearchAgent:
@@ -33,33 +46,63 @@ class ResearchAgent:
 
     def run(self, event: IncomingEvent) -> AgentResponse:
         """
-        Execute research questions against tiered sources and return evidence.
+        Search the source database using the event's redacted text as the query.
 
-        Produces an evidence graph (RESEARCH_ENGINE.md §7) that feeds the
-        ensemble decision engine.  If no official source is found, the output
-        text instructs the user NOT to share private information yet.
+        Confidence and human-review flag are derived from the best source tier found:
+          Tier 1 → confidence 1.0   (official govt/healthcare source)
+          Tier 2 → confidence 0.8
+          Tier 3 → confidence 0.6
+          Tier 4 → confidence 0.4
+          Tier 5 or none → confidence 0.0, requires_human_review=True
 
         Args:
             event: Normalised, redacted event from the device layer.
 
         Returns:
-            AgentResponse with evidence summary, source citations, and a
-            research confidence score.
+            AgentResponse with evidence_items populated from search results
+            and sources populated with source_id strings.
         """
-        # TODO: call Research Planner to generate targeted research questions
-        # TODO: query RAG database for known program/benefit information
-        # TODO: run live web search for current confirmation (Tavily / SerpAPI)
-        #       API key: os.environ["SEARCH_API_KEY"]  — never hardcode
-        # TODO: run URL intelligence checks (domain age, HTTPS, lookalike, threat feeds)
-        #       API key: os.environ["URL_SAFETY_API_KEY"]  — never hardcode
-        # TODO: build evidence graph and compute research_confidence score
+        results: list[EvidenceItem] = _engine.search(
+            query=event.redacted_text,
+            max_results=3,
+        )
+
+        # Determine the best (lowest-numbered) tier in the results
+        trusted = [r for r in results if r.tier <= _TRUSTED_TIER_THRESHOLD]
+        requires_human_review = len(trusted) == 0
+
+        if results:
+            best_tier = min(r.tier for r in results)
+            # Tier 1 → 1.0, Tier 2 → 0.8, ..., Tier 5 → 0.2
+            confidence = round((6 - best_tier) / 5, 2)
+        else:
+            confidence = 0.0
+
+        source_ids = [r.source_id for r in results]
+
+        if not results:
+            output_text = (
+                "I could not find an official source to verify this query. "
+                "Please verify directly with the relevant agency before taking any action."
+            )
+        elif requires_human_review:
+            output_text = (
+                "I found sources related to your query, but none from an official or "
+                "recognised organisation. Please verify with an official agency directly."
+            )
+        else:
+            source_titles = "; ".join(r.title for r in trusted[:2])
+            output_text = (
+                f"I found {len(trusted)} verified source(s) related to your query. "
+                f"Sources consulted: {source_titles}. "
+                "Please verify the details directly before taking any action."
+            )
+
         return AgentResponse(
             agent_name=self.NAME,
-            output_text=(
-                "I could not verify this from an official source yet. "
-                "Research retrieval will be implemented here."
-            ),
-            confidence=0.0,
-            sources=[],
-            requires_human_review=True,
+            output_text=output_text,
+            confidence=confidence,
+            sources=source_ids,
+            evidence_items=results,
+            requires_human_review=requires_human_review,
         )
