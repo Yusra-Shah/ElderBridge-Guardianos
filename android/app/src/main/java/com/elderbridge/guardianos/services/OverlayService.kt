@@ -15,7 +15,18 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.elderbridge.guardianos.network.ApiClient
+import com.elderbridge.guardianos.network.FinalDecision
+import com.elderbridge.guardianos.network.IncomingEvent
 import com.elderbridge.guardianos.redaction.ScreenContentHolder
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class OverlayService : Service() {
 
@@ -24,6 +35,14 @@ class OverlayService : Service() {
     private var expandedCard: View? = null
     private var isBubbleExpanded = false
 
+    // Coroutine scope tied to this service's lifetime; cancelled in onDestroy
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var analyzeJob: Job? = null
+
+    // Kept so the API response can update in-place without rebuilding the card
+    private var cardHeaderView: TextView? = null
+    private var cardBodyView: TextView? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -31,6 +50,8 @@ class OverlayService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         addBubble()
     }
+
+    // ── Bubble ────────────────────────────────────────────────────────────────
 
     private fun addBubble() {
         val dp = resources.displayMetrics.density
@@ -98,6 +119,8 @@ class OverlayService : Service() {
         Log.d(TAG, "Overlay bubble added")
     }
 
+    // ── Card lifecycle ────────────────────────────────────────────────────────
+
     private fun toggleExpanded() {
         if (isBubbleExpanded) collapseCard() else expandCard()
         isBubbleExpanded = !isBubbleExpanded
@@ -125,53 +148,121 @@ class OverlayService : Service() {
         }
 
         val snapshot = ScreenContentHolder.get()
-        val headerLabel: String
-        val bodyText: String
-        if (snapshot == null || snapshot.redactedText.isBlank()) {
-            headerLabel = "Not ready yet"
-            bodyText = "Open a form or message, then tap me again."
-        } else {
-            headerLabel = "What I can see on screen:"
-            bodyText = snapshot.redactedText
-        }
+        val hasContent = snapshot != null && snapshot.redactedText.isNotBlank()
 
-        card.addView(TextView(this).apply {
-            text = headerLabel
+        // Header label — updated in-place by showResponse / showError
+        val headerTv = TextView(this).apply {
+            text = if (hasContent) "Thinking…" else "Not ready yet"
             textSize = 13f
             setTextColor(Color.parseColor("#5E92F3"))
             setPadding(0, 0, 0, (10 * dp).toInt())
-        })
-        card.addView(TextView(this).apply {
-            text = bodyText
+        }
+        cardHeaderView = headerTv
+
+        // Body — updated in-place when the API responds
+        val bodyTv = TextView(this).apply {
+            text = if (hasContent) "" else "Open a form or message, then tap me again."
             textSize = 17f
             setTextColor(Color.WHITE)
             setPadding(0, 0, 0, (20 * dp).toInt())
             lineSpacingMultiplier = 1.4f
-        })
-        card.addView(Button(this).apply {
+        }
+        cardBodyView = bodyTv
+
+        val closeBtn = Button(this).apply {
             text = "Close"
             setTextColor(Color.WHITE)
             background = roundedDrawable(Color.parseColor("#1565C0"), 10 * dp)
             setOnClickListener { collapseCard(); isBubbleExpanded = false }
-        })
+        }
+
+        card.addView(headerTv)
+        card.addView(bodyTv)
+        card.addView(closeBtn)
 
         expandedCard = card
         windowManager.addView(card, cardParams)
         Log.d(TAG, "Overlay card expanded")
+
+        if (hasContent) {
+            startAnalysis(snapshot!!)
+        }
     }
 
     private fun collapseCard() {
+        // Cancel any in-flight API call so a late response can't touch removed views
+        analyzeJob?.cancel()
+        analyzeJob = null
+        cardHeaderView = null
+        cardBodyView = null
         expandedCard?.let { windowManager.removeView(it) }
         expandedCard = null
         Log.d(TAG, "Overlay card collapsed")
     }
 
+    // ── API call ──────────────────────────────────────────────────────────────
+
+    private fun startAnalysis(snapshot: ScreenContentHolder.ScreenSnapshot) {
+        analyzeJob?.cancel()
+        analyzeJob = serviceScope.launch {
+            try {
+                // SECURITY: snapshot.redactedText originates from ScreenContentHolder,
+                // which ScreenReaderService writes only after RedactionEngine.redact().
+                // No raw screen text ever reaches this payload.
+                val event = IncomingEvent(
+                    eventType = "FORM_SCREEN",
+                    sourceApp = snapshot.sourcePackage,
+                    redactedText = snapshot.redactedText,
+                    timestampMs = snapshot.capturedAtMs,
+                    userId = PLACEHOLDER_USER_ID
+                )
+
+                val decision: FinalDecision = withContext(Dispatchers.IO) {
+                    ApiClient.api.analyzeEvent(event)
+                }
+
+                if (isActive) showResponse(decision)
+
+            } catch (e: CancellationException) {
+                throw e // always rethrow so coroutine framework cancels cleanly
+            } catch (e: Exception) {
+                Log.w(TAG, "analyzeEvent failed (${e.javaClass.simpleName}): ${e.message}")
+                if (isActive) showError(snapshot.redactedText)
+            }
+        }
+    }
+
+    // Both run on Dispatchers.Main (the scope default), so direct View mutation is safe
+
+    private fun showResponse(decision: FinalDecision) {
+        cardHeaderView?.text = "ElderBridge says:"
+        cardBodyView?.text = buildString {
+            append(decision.responseText)
+            if (decision.nextSteps.isNotEmpty()) {
+                append("\n\nNext steps:")
+                decision.nextSteps.forEach { append("\n• $it") }
+            }
+        }
+    }
+
+    private fun showError(fallbackRedactedText: String) {
+        cardHeaderView?.text = "Connection issue"
+        cardBodyView?.text =
+            "I couldn't reach the assistant right now. " +
+            "Showing what I found on screen instead.\n\n$fallbackRedactedText"
+    }
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+
     override fun onDestroy() {
         super.onDestroy()
+        serviceScope.cancel()       // cancels analyzeJob and all child coroutines
         bubbleView?.let { windowManager.removeView(it) }
         collapseCard()
         Log.d(TAG, "OverlayService destroyed")
     }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun circleDrawable(color: Int) = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
@@ -186,5 +277,8 @@ class OverlayService : Service() {
 
     companion object {
         private const val TAG = "OverlayService"
+
+        // TODO: Replace with a real authenticated user ID when the auth module lands
+        private const val PLACEHOLDER_USER_ID = "00000000-0000-0000-0000-000000000001"
     }
 }
