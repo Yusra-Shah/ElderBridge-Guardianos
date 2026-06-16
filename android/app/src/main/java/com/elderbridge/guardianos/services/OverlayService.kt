@@ -19,6 +19,7 @@ import com.elderbridge.guardianos.network.ApiClient
 import com.elderbridge.guardianos.network.FinalDecision
 import com.elderbridge.guardianos.network.IncomingEvent
 import com.elderbridge.guardianos.redaction.ScreenContentHolder
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -165,7 +166,7 @@ class OverlayService : Service() {
             textSize = 17f
             setTextColor(Color.WHITE)
             setPadding(0, 0, 0, (20 * dp).toInt())
-            lineSpacingMultiplier = 1.4f
+            setLineSpacing(0f, 1.4f)
         }
         cardBodyView = bodyTv
 
