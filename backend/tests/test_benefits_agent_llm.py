@@ -212,31 +212,35 @@ class TestLLMFallback:
 
 
 # ---------------------------------------------------------------------------
-# Test Group 4 — Missing API key raises RuntimeError (not swallowed)
+# Test Group 4 — Missing API key falls back gracefully
 # ---------------------------------------------------------------------------
 
-class TestMissingAPIKeyPropagates:
-    """A missing ANTHROPIC_API_KEY is a configuration error, not a transient
-    failure.  BenefitsAgent must NOT catch RuntimeError — it must propagate."""
+class TestMissingAPIKeyFallsBack:
+    """A missing ANTHROPIC_API_KEY now raises LLMUnavailableError from client.py,
+    and BenefitsAgent catches both LLMUnavailableError and RuntimeError, so the
+    agent always returns a safe fallback response regardless of which exception
+    the LLM layer raises."""
 
     @patch(
         "agents.benefits_agent.call_llm",
         side_effect=RuntimeError("ANTHROPIC_API_KEY is not set or empty."),
     )
-    def test_runtime_error_propagates_through_agent(self, _):
-        with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
-            BenefitsAgent().run(_make_event())
+    def test_runtime_error_triggers_fallback(self, _):
+        """RuntimeError from call_llm must be caught and return used_fallback=True."""
+        resp = BenefitsAgent().run(_make_event())
+        assert resp.used_fallback is True
 
     @patch(
         "agents.benefits_agent.call_llm",
-        side_effect=RuntimeError("ANTHROPIC_API_KEY is not set or empty."),
+        side_effect=LLMUnavailableError("ANTHROPIC_API_KEY is not set or empty."),
     )
-    def test_runtime_error_is_not_swallowed_as_fallback(self, _):
-        """Confirm used_fallback is never set to True for a config error."""
-        with pytest.raises(RuntimeError):
-            BenefitsAgent().run(_make_event())
-        # If we reach here without exception the test would have already failed above.
-        # The assertion is implicit: no AgentResponse is returned.
+    def test_missing_key_as_llm_error_triggers_fallback(self, _):
+        """client.py now raises LLMUnavailableError for a missing key;
+        agent must catch it and return a safe rule-based response."""
+        resp = BenefitsAgent().run(_make_event())
+        assert resp.used_fallback is True
+        assert resp.requires_human_review is True
+        assert len(resp.output_text) > 20
 
 
 # ---------------------------------------------------------------------------

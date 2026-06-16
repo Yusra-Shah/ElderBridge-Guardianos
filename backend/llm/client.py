@@ -20,12 +20,11 @@ MODEL = "claude-sonnet-4-6"
 
 
 class LLMUnavailableError(Exception):
-    """Raised when the Anthropic API call fails at runtime.
+    """Raised when the LLM cannot be reached or used for any reason.
 
-    Covers: network errors, timeouts, rate limits, API errors.
-    Does NOT cover a missing API key — that raises RuntimeError instead,
-    because a missing key is a configuration/developer error, not a
-    transient runtime condition that should trigger a fallback.
+    Covers: missing/empty API key, network errors, timeouts, rate limits,
+    API-level errors.  Callers should catch this and fall back to rule-based
+    responses rather than propagating the error to the user.
     """
 
 
@@ -42,16 +41,14 @@ def call_llm(system_prompt: str, user_message: str, max_tokens: int = 512) -> st
         The model's plain-text response string (first content block).
 
     Raises:
-        RuntimeError: If ``ANTHROPIC_API_KEY`` is missing or empty — this is a
-                      configuration error, not a transient failure.  Do NOT catch
-                      this in agent fallback logic; surface it to the developer.
-        LLMUnavailableError: If the API call fails for any other reason
-                             (network error, timeout, rate limit, API-level error).
+        LLMUnavailableError: For any failure — missing/empty API key, network
+                             error, timeout, rate limit, or API-level error.
+                             Callers should catch this and fall back gracefully.
     """
     # Read key at call time so tests can patch os.environ without module-level caching
     api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
-        raise RuntimeError(
+        raise LLMUnavailableError(
             "ANTHROPIC_API_KEY is not set or empty. "
             "Set it in your deployment environment (see .env.example). "
             "Never hardcode secrets in source code."

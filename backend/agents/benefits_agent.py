@@ -14,11 +14,10 @@ Hard rules (RESPONSIBLE_AI.md §3):
   NEVER make absolute guarantees about benefit amounts or approval outcomes.
 
 LLM wiring:
-  Calls the Anthropic API via llm/client.py.  On LLMUnavailableError falls
-  back to the rule-based stub with used_fallback=True on the response.
-
-  RuntimeError (missing ANTHROPIC_API_KEY) is NOT caught here — it is a
-  developer/configuration error and must propagate to surface the problem.
+  Calls the Anthropic API via llm/client.py.  On any LLMUnavailableError or
+  RuntimeError falls back to the rule-based stub with used_fallback=True.
+  Both exception types are treated identically: log a warning and serve the
+  safe rule-based response so the user is never left without guidance.
 """
 from __future__ import annotations
 
@@ -73,8 +72,8 @@ class BenefitsAgent:
         Calls the Anthropic LLM with a safety-focused system prompt and runs
         the critic-style overclaim rewriter on the result before returning.
 
-        On LLMUnavailableError falls back to a rule-based stub response with
-        used_fallback=True.  RuntimeError (missing API key) propagates unchanged.
+        On LLMUnavailableError or RuntimeError falls back to a rule-based stub
+        response with used_fallback=True — both are treated identically.
 
         Args:
             event:          Normalised, redacted event from the device layer.
@@ -99,7 +98,7 @@ class BenefitsAgent:
                 requires_human_review=True,  # always required for benefits guidance per policy
                 used_fallback=False,
             )
-        except LLMUnavailableError as exc:
+        except (LLMUnavailableError, RuntimeError) as exc:
             logger.warning("BenefitsAgent | LLM unavailable, using rule-based fallback: %s", exc)
             return self._fallback_response()
 
