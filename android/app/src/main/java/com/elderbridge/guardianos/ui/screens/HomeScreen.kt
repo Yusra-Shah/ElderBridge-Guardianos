@@ -1,5 +1,8 @@
 package com.elderbridge.guardianos.ui.screens
 
+import android.content.Intent
+import android.provider.Settings
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,12 +32,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.elderbridge.guardianos.services.OverlayService
+import com.elderbridge.guardianos.services.ScreenReaderService
 import com.elderbridge.guardianos.ui.theme.ActiveGreen
 import com.elderbridge.guardianos.ui.theme.ActiveGreenLight
 
 @Composable
 fun HomeScreen(onTryDemo: () -> Unit) {
+    val context = LocalContext.current
     var isMonitoringEnabled by remember { mutableStateOf(false) }
 
     Column(
@@ -100,7 +107,37 @@ fun HomeScreen(onTryDemo: () -> Unit) {
                     }
                     Switch(
                         checked = isMonitoringEnabled,
-                        onCheckedChange = { isMonitoringEnabled = it },
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                if (!Settings.canDrawOverlays(context)) {
+                                    Toast.makeText(
+                                        context,
+                                        "Please grant Display Over Apps permission first",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                } else {
+                                    val enabledServices = Settings.Secure.getString(
+                                        context.contentResolver,
+                                        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                                    ) ?: ""
+                                    val component =
+                                        "${context.packageName}/${ScreenReaderService::class.java.name}"
+                                    if (!enabledServices.contains(component, ignoreCase = true)) {
+                                        Toast.makeText(
+                                            context,
+                                            "Please enable ElderBridge in Accessibility Settings first",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    } else {
+                                        context.startService(Intent(context, OverlayService::class.java))
+                                        isMonitoringEnabled = true
+                                    }
+                                }
+                            } else {
+                                context.stopService(Intent(context, OverlayService::class.java))
+                                isMonitoringEnabled = false
+                            }
+                        },
                         colors = SwitchDefaults.colors(
                             checkedTrackColor = ActiveGreen,
                             checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
