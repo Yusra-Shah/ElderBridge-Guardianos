@@ -14,6 +14,7 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import com.elderbridge.guardianos.network.ApiClient
 import com.elderbridge.guardianos.network.FinalDecision
@@ -170,6 +171,22 @@ class OverlayService : Service() {
         }
         cardBodyView = bodyTv
 
+        // Cap body height so long responses scroll rather than pushing Close off screen
+        val maxBodyHeightPx = (400 * dp).toInt()
+        val bodyScroll = object : ScrollView(this) {
+            override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                super.onMeasure(
+                    widthMeasureSpec,
+                    View.MeasureSpec.makeMeasureSpec(maxBodyHeightPx, View.MeasureSpec.AT_MOST)
+                )
+            }
+        }.apply {
+            addView(bodyTv, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
+
         val closeBtn = Button(this).apply {
             text = "Close"
             setTextColor(Color.WHITE)
@@ -178,7 +195,7 @@ class OverlayService : Service() {
         }
 
         card.addView(headerTv)
-        card.addView(bodyTv)
+        card.addView(bodyScroll)
         card.addView(closeBtn)
 
         expandedCard = card
