@@ -112,7 +112,7 @@ class BenefitsAgent:
         user_message = self._build_user_message(event, evidence_items or [])
 
         try:
-            raw_text = call_llm(_SYSTEM_PROMPT, user_message, max_tokens=2048)
+            raw_text = call_llm(_SYSTEM_PROMPT, user_message)
             cleaned_text, was_rewritten = _rewrite(raw_text)
             if was_rewritten:
                 logger.debug("BenefitsAgent | LLM output contained overclaims — rewrote")

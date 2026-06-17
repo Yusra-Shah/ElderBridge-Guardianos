@@ -43,18 +43,19 @@ class LLMUnavailableError(Exception):
     """
 
 
-def call_llm(system_prompt: str, user_message: str, max_tokens: int = 2048) -> str:
+def call_llm(system_prompt: str, user_message: str, max_tokens: int = 512) -> str:
     """
     Call the Azure OpenAI chat completions endpoint and return the response text.
 
     Args:
         system_prompt: Content for the ``system`` message.
         user_message:  Content for the ``user`` message.
-        max_tokens:    Token budget for the completion (default 2048).
-                       Reasoning models like gpt-5-mini consume tokens for
-                       internal reasoning before producing output, so this
-                       needs to be larger than for non-reasoning models.
+        max_tokens:    Token budget for the completion (default 512).
                        Passed as ``max_completion_tokens`` in the API call.
+                       NOTE: reasoning models (gpt-5-mini, o1, o3, …) consume
+                       tokens internally for chain-of-thought before producing
+                       any visible output.  If you get empty responses or
+                       finish_reason="length", raise this value to 1024–2048.
 
     Returns:
         The model's plain-text response string.
