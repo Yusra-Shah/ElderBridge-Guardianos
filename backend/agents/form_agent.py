@@ -3,12 +3,15 @@ Screen / Form Agent — UI and document field interpreter.
 
 Responsibility (AI_AGENTS.md §7, §8):
   Understands confusing form fields, government portal screens, and scanned
-  official letters.  For screen events it parses accessibility text to explain
-  what each field means in plain language.  For document events it extracts
-  deadlines, required documents, agency contact details, and next-step
-  checklists.
+  official letters.  For FORM_SCREEN events it calls the LLM to explain each
+  visible field in plain language.  For DOCUMENT events it returns a prompt to
+  review with a trusted person (full extraction in a future milestone).
 
-Detects:
+LLM wiring:
+  Calls Azure OpenAI via llm/client.py.  On LLMUnavailableError or RuntimeError
+  falls back to a rule-based stub with used_fallback=True.
+
+Detects and explains:
   - income / household / dependent fields
   - document-upload prompts
   - OTP / password fields (flagged immediately to GuardrailAgent)
@@ -18,8 +21,20 @@ Detects:
 """
 from __future__ import annotations
 
+import logging
+
+from llm.client import LLMUnavailableError, call_llm
 from schemas.decision_schema import AgentResponse
 from schemas.event_schema import EventType, IncomingEvent
+
+logger = logging.getLogger("elderbridge.agents.form")
+
+_SYSTEM_PROMPT = (
+    "You are helping an elderly person understand a government form. "
+    "For each field name you see, explain in 1-2 simple sentences what it means "
+    "and why the form needs it. Use simple language. "
+    "Never say the form is suspicious unless it clearly is."
+)
 
 
 class FormAgent:
@@ -31,22 +46,72 @@ class FormAgent:
         """
         Parse screen accessibility text or document content.
 
+        For FORM_SCREEN events: calls the LLM to explain each visible field in
+        plain language suitable for an elderly person.  Falls back to a
+        rule-based response if the LLM is unavailable.
+
+        For DOCUMENT events: returns a prompt to review with a trusted person
+        (full deadline extraction is a future milestone).
+
         Args:
             event: Normalised, redacted event from the device layer.
 
         Returns:
             AgentResponse with field-by-field explanations (FORM_SCREEN)
-            or a document summary with deadline and next steps (DOCUMENT).
+            or a safe review prompt (DOCUMENT).
         """
-        # TODO: classify screen_type from event.redacted_text keywords
-        # TODO: extract field labels and map to plain-language explanations
-        # TODO: for DOCUMENT events, run deadline extraction and document-type detection
-        # TODO: flag OTP / password fields to trigger GuardrailAgent immediately
-        mode = "screen analysis" if event.event_type == EventType.FORM_SCREEN else "document analysis"
+        if event.event_type == EventType.FORM_SCREEN:
+            return self._explain_form(event)
+        return self._document_response()
+
+    # -----------------------------------------------------------------------
+    # Helpers
+    # -----------------------------------------------------------------------
+
+    def _explain_form(self, event: IncomingEvent) -> AgentResponse:
+        user_message = (
+            f"The person is looking at this government form or screen:\n\n"
+            f"{event.redacted_text}\n\n"
+            "Please explain each visible field in plain, simple language "
+            "suitable for an elderly person unfamiliar with government forms."
+        )
+        try:
+            raw_text = call_llm(_SYSTEM_PROMPT, user_message, max_tokens=512)
+            return AgentResponse(
+                agent_name=self.NAME,
+                output_text=raw_text,
+                confidence=0.8,
+                sources=[],
+                requires_human_review=False,
+                used_fallback=False,
+            )
+        except (LLMUnavailableError, RuntimeError) as exc:
+            logger.warning("FormAgent | LLM unavailable, using fallback: %s", exc)
+            return self._fallback_response()
+
+    def _fallback_response(self) -> AgentResponse:
         return AgentResponse(
             agent_name=self.NAME,
-            output_text=f"Form/document {mode} placeholder. Field parsing will be implemented here.",
-            confidence=0.0,
+            output_text=(
+                "This form is asking for standard personal information needed to "
+                "process your application. If you are unsure about any field, ask "
+                "a trusted person to help you fill it in correctly."
+            ),
+            confidence=0.3,
+            sources=[],
+            requires_human_review=True,
+            used_fallback=True,
+        )
+
+    def _document_response(self) -> AgentResponse:
+        return AgentResponse(
+            agent_name=self.NAME,
+            output_text=(
+                "This appears to be an official document. Please review it carefully "
+                "with a trusted person if you have any questions about its contents "
+                "or what action it requires from you."
+            ),
+            confidence=0.3,
             sources=[],
             requires_human_review=True,
         )

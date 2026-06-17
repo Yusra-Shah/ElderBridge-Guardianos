@@ -9,6 +9,18 @@ Responsibility (AI_AGENTS.md §16 | SECURITY_MODEL.md §2, §8):
   Even if every preceding agent approved the output, the guardrail can and
   will override it.  It has veto power in the ensemble (AI_AGENTS.md §17).
 
+Three-tier response model:
+  BLOCKED (requires_human_review=True):
+    Triggered by hard-stop signals — OTP codes, payment transfer instructions,
+    explicit credential requests.  Response text is the STOP safe replacement.
+    Calling code must use STOP_AND_VERIFY risk level.
+  CAUTION (requires_human_review=False, output_text=caution message):
+    Triggered by suspicious-but-not-definitive patterns — click-to-verify
+    links, prize claim language, urgent account suspension threats.
+    Calling code should prepend the caution note to agent output.
+  PASSED (requires_human_review=False, output_text=""):
+    No signals detected.  Calling code should use agent/critic output directly.
+
 Hard blocks (non-negotiable, per SECURITY_MODEL.md §2):
   - Output that echoes or mentions OTPs
   - Output instructing the user to enter/share an OTP
@@ -26,21 +38,21 @@ Pattern scanning strategy:
 requires_human_review semantics:
   True  → BLOCKED: orchestrator must use output_text as final response
           and override risk_flag to STOP_AND_VERIFY.
-  False → PASSED: draft_output is safe to deliver as-is.
+  False → PASSED or CAUTION: draft_output is safe; output_text is either
+          empty (clean) or a cautionary note to prepend.
 """
 from __future__ import annotations
 
 import re
 
 from schemas.decision_schema import AgentResponse
-from schemas.event_schema import IncomingEvent
+from schemas.event_schema import EventType, IncomingEvent
 
 # ---------------------------------------------------------------------------
 # Pattern definitions
 # ---------------------------------------------------------------------------
 
-# Each pattern that must never appear in an AI output OR arrive as unsafe input.
-# Written as regex strings so they can be unit-tested independently of the class.
+# Patterns that must never appear in AI output.
 BLOCKED_OUTPUT_PATTERNS: list[str] = [
     r"you qualify\b",            # eligibility overclaim (critic should catch first)
     r"definitely safe",          # safety overclaim
@@ -54,17 +66,29 @@ BLOCKED_OUTPUT_PATTERNS: list[str] = [
     r"transfer\s+the\s+funds",
 ]
 
-# High-risk signals in the incoming event text that trigger an immediate guardrail
-# block regardless of what the draft output says.
+# Hard-stop signals in incoming event text — always BLOCKED regardless of draft.
+# Covers definitive scam/phishing patterns: OTP requests, explicit transfers.
 INPUT_RISK_SIGNALS: list[str] = [
     r"enter\s+(your\s+)?otp",
     r"send\s+(your\s+)?otp",
     r"verify\s+with\s+otp",
-    r"otp\s*(is|=|:)\s*\d",     # OTP value leaked through
-    r"\[redacted_otp\]",         # OTP was present and redacted
+    r"otp\s*(is|=|:)\s*\d",          # OTP value leaked through
+    r"\[redacted_otp\]",              # OTP was present and redacted
     r"enter\s+your\s+pin",
     r"transfer\s+(rs\.?|pkr\.?|\$)?\s*\d",  # transfer with amount
     r"send\s+(rs\.?|pkr\.?|\$)?\s*\d",
+    r"\botp\b",                       # any mention of OTP in event text
+]
+
+# Caution-level signals — suspicious but not definitively dangerous.
+# Guardrail passes (requires_human_review=False) but returns a caution note
+# in output_text for the orchestrator to prepend to the agent response.
+CAUTION_SIGNALS: list[str] = [
+    r"click\s+(this|the|here)\s*(link|url)\s*to\s*(verify|claim|confirm|activate)",
+    r"\bclaim\s+your\s+(prize|reward|jackpot|lottery)\b",
+    r"account\s+(will\s+be\s+)?(suspended|blocked|closed)\s+(in\s+)?\d+\s*hours?",
+    r"your\s+(cnic|id|identity)\s*(number)?\s*(is\s+)?(needed|required|must\s+be\s+verified).*urgent",
+    r"urgent.*verify.*cnic|cnic.*verify.*urgent",
 ]
 
 # Pre-compiled pattern sets for fast repeated matching
@@ -74,8 +98,15 @@ _COMPILED_OUTPUT: list[re.Pattern[str]] = [
 _COMPILED_INPUT: list[re.Pattern[str]] = [
     re.compile(p, re.IGNORECASE) for p in INPUT_RISK_SIGNALS
 ]
+_COMPILED_CAUTION: list[re.Pattern[str]] = [
+    re.compile(p, re.IGNORECASE) for p in CAUTION_SIGNALS
+]
 
-# Safe replacement shown to the user whenever the guardrail blocks output.
+# ---------------------------------------------------------------------------
+# Response text constants
+# ---------------------------------------------------------------------------
+
+# Safe replacement shown when a HARD STOP is triggered.
 # Language follows RESPONSIBLE_AI.md §3 — hedged, calm, no absolutes.
 _SAFE_REPLACEMENT = (
     "Please stop and do not continue. "
@@ -85,11 +116,25 @@ _SAFE_REPLACEMENT = (
     "agency using a number you already know."
 )
 
+# Caution note prepended to agent output when CAUTION signals are detected.
+# Deliberately mild — does not alarm but prompts caution.
+_CAUTION_NOTE = (
+    "Please take a moment before continuing. "
+    "This message has some patterns that are sometimes used by unofficial parties. "
+    "Ask a trusted person to review this with you before taking any action."
+)
+
 _SAFE_NEXT_STEPS = [
     "Do not share any code, password, PIN, or bank detail.",
     "Close this message or screen.",
     "Call the official helpline using a number you already trust.",
     "Contact your trusted family member or caregiver.",
+]
+
+_CAUTION_NEXT_STEPS = [
+    "Read this message carefully before responding.",
+    "Do not click any links or call unknown numbers without verifying first.",
+    "Ask a trusted family member or caregiver to review this with you.",
 ]
 
 
@@ -111,16 +156,16 @@ class GuardrailAgent:
         """
         Scan draft output and event text for policy violations.
 
-        Scanning is performed in two passes:
-          1. Output patterns — phrases the AI must never output.
-          2. Input risk signals — dangerous patterns in the incoming event text
-             that indicate the user is in an active high-risk situation.
+        Three-pass scanning:
+          Pass 1 — Output patterns: phrases the AI must never produce.
+          Pass 2 — Hard-stop input signals: definitive scam/phishing patterns
+                   in the incoming event that demand an immediate BLOCKED response.
+          Pass 3 — Caution signals: suspicious-but-not-definitive patterns.
+                   Returns a non-blocking caution note instead of hard stop.
 
-        If either pass finds a match the response is BLOCKED (requires_human_review=True)
-        and output_text is replaced with the safe fallback message.
-
-        If both passes are clean the response is PASSED (requires_human_review=False)
-        and output_text is the unchanged draft_output.
+        Normal government forms (CNIC field, profession, name etc.) with no
+        OTP, payment, or urgency patterns pass all three checks and return
+        a clean PASSED response.
 
         Args:
             event:        Normalised, redacted event from the device layer.
@@ -128,23 +173,35 @@ class GuardrailAgent:
 
         Returns:
             AgentResponse.
-              requires_human_review=True  → BLOCKED; use output_text as response.
-              requires_human_review=False → PASSED; draft_output is safe.
+              requires_human_review=True, output_text=stop_msg → BLOCKED
+              requires_human_review=False, output_text=caution_note → CAUTION
+              requires_human_review=False, output_text="" → PASSED
         """
         # Pass 1: output content check
         trigger = self._scan(_COMPILED_OUTPUT, draft_output)
         if trigger:
             return self._block(f"output pattern matched: '{trigger}'")
 
-        # Pass 2: incoming event risk signal check
+        # Pass 2: hard-stop input risk signal check
         trigger = self._scan(_COMPILED_INPUT, event.redacted_text)
         if trigger:
             return self._block(f"input risk signal matched: '{trigger}'")
 
-        # All clear
+        # Pass 3: caution signal check (non-blocking)
+        trigger = self._scan(_COMPILED_CAUTION, event.redacted_text)
+        if trigger:
+            return AgentResponse(
+                agent_name=self.NAME,
+                output_text=_CAUTION_NOTE,
+                confidence=0.85,
+                sources=[],
+                requires_human_review=False,
+            )
+
+        # All clear — PASSED
         return AgentResponse(
             agent_name=self.NAME,
-            output_text=draft_output,
+            output_text="",   # empty = clean pass; orchestrator uses agent/critic output
             confidence=1.0,
             sources=[],
             requires_human_review=False,
@@ -162,5 +219,10 @@ class GuardrailAgent:
 
     @property
     def safe_next_steps(self) -> list[str]:
-        """Next steps to include in the FinalDecision when a block is triggered."""
+        """Next steps to include in FinalDecision when a BLOCK is triggered."""
         return list(_SAFE_NEXT_STEPS)
+
+    @property
+    def caution_next_steps(self) -> list[str]:
+        """Next steps to include in FinalDecision when a CAUTION is triggered."""
+        return list(_CAUTION_NEXT_STEPS)

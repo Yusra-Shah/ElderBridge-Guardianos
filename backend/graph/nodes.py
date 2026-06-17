@@ -107,9 +107,16 @@ def node_form(state: PipelineState) -> PipelineState:
 
     Appends to: agent_responses.
     Reads: event.
+
+    FormAgent now calls the LLM for FORM_SCREEN events to explain each
+    visible field in plain language.  Falls back to a rule-based stub on
+    LLMUnavailableError (used_fallback=True on the response).
     """
     resp = _form.run(state["event"])
-    logger.debug("node_form | confidence=%.2f", resp.confidence)
+    if resp.used_fallback:
+        logger.warning("node_form | LLM unavailable — rule-based fallback used")
+    else:
+        logger.debug("node_form | confidence=%.2f", resp.confidence)
     return {
         **state,
         "agent_responses": [*state.get("agent_responses", []), resp],
@@ -177,12 +184,18 @@ def node_guardrail(state: PipelineState) -> PipelineState:
     Run the Safety Guardrail Agent — final veto before user delivery.
 
     Sets: final_decision.
-    Reads: event, draft_response, risk_flag, next_steps, evidence_items.
+    Reads: event, draft_response, risk_flag, next_steps, evidence_items,
+           last_critic_response (combined agent output).
 
-    If the guardrail BLOCKS:
-      final_decision uses the safe replacement text and STOP_AND_VERIFY.
-    If the guardrail PASSES:
-      final_decision uses the baseline draft_response and risk_flag.
+    Three outcomes:
+      BLOCKED (requires_human_review=True):
+        Uses safe replacement text and STOP_AND_VERIFY. Source citations dropped.
+      CAUTION (requires_human_review=False, guardrail_resp.output_text non-empty):
+        Prepends caution note to combined agent/critic output.
+        Risk flag and next_steps come from baseline.
+      PASSED (requires_human_review=False, guardrail_resp.output_text empty):
+        Uses combined agent/critic output as response_text.
+        Falls back to baseline draft_response if no agent output is available.
     """
     event = state["event"]
     draft = state.get("draft_response", "")
@@ -190,10 +203,13 @@ def node_guardrail(state: PipelineState) -> PipelineState:
     guardrail_resp = _guardrail.run(event, draft)
     logger.debug(
         "node_guardrail | result=%s",
-        "BLOCKED" if guardrail_resp.requires_human_review else "PASS",
+        "BLOCKED" if guardrail_resp.requires_human_review else (
+            "CAUTION" if guardrail_resp.output_text else "PASS"
+        ),
     )
 
     if guardrail_resp.requires_human_review:
+        # HARD STOP — override everything with the safe fallback
         decision = FinalDecision(
             response_text=guardrail_resp.output_text,
             risk_flag=RiskLevel.STOP_AND_VERIFY,
@@ -201,8 +217,34 @@ def node_guardrail(state: PipelineState) -> PipelineState:
             source_citations=[],
         )
     else:
+        # Prefer the critic-cleaned combined agent output over the rule-based baseline.
+        # The critic joins all specialist outputs with " | " after overclaim rewriting.
+        # Falls back to baseline if agents produced no meaningful text.
+        critic_resp = state.get("last_critic_response")
+        agent_text = (
+            critic_resp.output_text
+            if (
+                critic_resp
+                and critic_resp.output_text
+                and "No specialist outputs to review." not in critic_resp.output_text
+            )
+            else ""
+        )
+
+        # Guardrail caution note: non-empty only for CAUTION-level events
+        caution_note = guardrail_resp.output_text  # "" for clean pass
+
+        if caution_note and agent_text:
+            final_text = f"{caution_note}\n\n{agent_text}"
+        elif caution_note:
+            final_text = f"{caution_note}\n\n{draft}" if draft else caution_note
+        elif agent_text:
+            final_text = agent_text
+        else:
+            final_text = draft  # baseline fallback
+
         decision = FinalDecision(
-            response_text=draft,
+            response_text=final_text,
             risk_flag=state.get("risk_flag", RiskLevel.SOFT_HELP),
             next_steps=state.get("next_steps", []),
             source_citations=state.get("evidence_items", []),

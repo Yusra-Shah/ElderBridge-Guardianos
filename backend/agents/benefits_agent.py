@@ -14,7 +14,7 @@ Hard rules (RESPONSIBLE_AI.md §3):
   NEVER make absolute guarantees about benefit amounts or approval outcomes.
 
 LLM wiring:
-  Calls the Anthropic API via llm/client.py.  On any LLMUnavailableError or
+  Calls Azure OpenAI via llm/client.py.  On any LLMUnavailableError or
   RuntimeError falls back to the rule-based stub with used_fallback=True.
   Both exception types are treated identically: log a warning and serve the
   safe rule-based response so the user is never left without guidance.
@@ -22,21 +22,38 @@ LLM wiring:
 from __future__ import annotations
 
 import logging
+import re
 
 from agents.critic_agent import _rewrite
 from llm.client import LLMUnavailableError, call_llm
 from schemas.decision_schema import AgentResponse, EvidenceItem
-from schemas.event_schema import IncomingEvent
+from schemas.event_schema import EventType, IncomingEvent
 
 logger = logging.getLogger("elderbridge.agents.benefits")
 
 # ---------------------------------------------------------------------------
-# System prompt — encodes RESPONSIBLE_AI.md hard rules for the LLM
+# System prompt — encodes RESPONSIBLE_AI.md hard rules + context awareness
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = (
     "You are the ElderBridge Benefits Navigator, an AI assistant helping older "
-    "adults understand public benefit and government support programs.\n\n"
+    "adults in Pakistan understand public benefit and government support programs.\n\n"
+
+    "CONTEXT HANDLING — respond differently based on what is on screen:\n"
+    "- If the screen shows a government FORM or APPLICATION: Identify what benefit "
+    "or service the form is for (e.g. NADRA CNIC renewal, Ehsaas senior citizen card, "
+    "pension application, Zakat assistance). Explain in simple terms whether the person "
+    "may be eligible and what documents they may need to gather.\n"
+    "- If the screen shows a suspicious SMS, notification, or link: Clearly explain "
+    "(1) what the message is claiming, (2) why it is suspicious — for example, real "
+    "government benefits are never distributed via SMS OTP or by clicking unknown links, "
+    "and (3) what the real official process actually looks like.\n"
+    "- If an official helpline number or email address is visible in the screen content, "
+    "extract it and include it as: 'Official helpline: [number or email]'.\n"
+    "- If no official contact is visible, end your response with: 'Contact the official "
+    "helpline. You can find the number on the official government website or on your "
+    "benefit documents.'\n\n"
+
     "HARD RULES — never violate these:\n"
     "1. NEVER say 'you qualify' — always say "
     "'you may qualify based on the information provided'.\n"
@@ -55,6 +72,15 @@ _SYSTEM_PROMPT = (
     "personal information.\n"
 )
 
+# Regex patterns for extracting official contacts from screen text
+_PHONE_PATTERN = re.compile(
+    r'(?:helpline|contact|call|tel|phone|number)[\s:]+([+0-9][\d\s\-]{6,14})',
+    re.IGNORECASE,
+)
+_EMAIL_PATTERN = re.compile(
+    r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
+)
+
 
 class BenefitsAgent:
     """Retrieves and explains public-benefit eligibility rules via LLM with rule-based fallback."""
@@ -69,8 +95,8 @@ class BenefitsAgent:
         """
         Analyse the event for benefit-related content and return guidance.
 
-        Calls the Anthropic LLM with a safety-focused system prompt and runs
-        the critic-style overclaim rewriter on the result before returning.
+        Calls the LLM with a context-aware system prompt and runs the
+        critic-style overclaim rewriter on the result before returning.
 
         On LLMUnavailableError or RuntimeError falls back to a rule-based stub
         response with used_fallback=True — both are treated identically.
@@ -86,7 +112,7 @@ class BenefitsAgent:
         user_message = self._build_user_message(event, evidence_items or [])
 
         try:
-            raw_text = call_llm(_SYSTEM_PROMPT, user_message, max_tokens=512)
+            raw_text = call_llm(_SYSTEM_PROMPT, user_message, max_tokens=2048)
             cleaned_text, was_rewritten = _rewrite(raw_text)
             if was_rewritten:
                 logger.debug("BenefitsAgent | LLM output contained overclaims — rewrote")
@@ -111,15 +137,48 @@ class BenefitsAgent:
         event: IncomingEvent,
         evidence_items: list[EvidenceItem],
     ) -> str:
+        # Detect screen context
+        if event.event_type == EventType.FORM_SCREEN:
+            context = "CONTEXT: The person is viewing a government form or application screen."
+        elif event.event_type == EventType.SMS:
+            context = "CONTEXT: The person received an SMS message. Check carefully for scam patterns."
+        elif event.event_type == EventType.DOCUMENT:
+            context = "CONTEXT: The person is viewing an official document or letter."
+        elif event.event_type == EventType.NOTIFICATION:
+            context = "CONTEXT: The person received a notification. Check for authenticity."
+        else:
+            context = ""
+
+        # Detect official contacts visible on screen
+        phone_match = _PHONE_PATTERN.search(event.redacted_text)
+        email_match = _EMAIL_PATTERN.search(event.redacted_text)
+        if phone_match or email_match:
+            contact_note = (
+                "Note: An official contact number or email appears to be visible in "
+                "the screen content — please extract and include it in your response."
+            )
+        else:
+            contact_note = (
+                "Note: No official helpline number or email is visible in the screen "
+                "content. End your response with the standard helpline prompt."
+            )
+
         parts = [
             f"Event type: {event.event_type.value}",
             f"Source app: {event.source_app}",
-            f"Screen content (already redacted of PII): {event.redacted_text}",
         ]
+        if context:
+            parts.append(context)
+        parts.append(
+            f"Screen content (already redacted of PII): {event.redacted_text}"
+        )
+        parts.append(contact_note)
+
         if evidence_items:
             parts.append("\nSupporting sources found by Research Engine:")
             for item in evidence_items[:5]:  # cap at 5 to stay within token budget
                 parts.append(f"  [Tier {item.tier}] {item.title}: {item.snippet[:200]}")
+
         parts.append(
             "\nProvide brief, hedged benefit guidance based on the above. "
             "Follow all hard rules in your system prompt."
@@ -135,7 +194,8 @@ class BenefitsAgent:
                 "You may qualify for public support programs based on your age and "
                 "circumstances, but please verify directly with the official agency "
                 "or a trusted caseworker. "
-                "I could not confirm specific program details at this time."
+                "Contact the official helpline. You can find the number on the official "
+                "government website or on your benefit documents."
             ),
             confidence=0.1,
             sources=[],

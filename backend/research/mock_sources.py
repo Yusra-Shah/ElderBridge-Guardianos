@@ -195,7 +195,100 @@ SRC_OTP_AWARENESS = MockSource(
 )
 
 # ---------------------------------------------------------------------------
-# E. Community directory — Tier 4
+# E. Pakistan-specific senior citizen and pension resources — Tier 1 & 2
+# ---------------------------------------------------------------------------
+
+SRC_PK_SENIOR_CARD = MockSource(
+    source_id="src_pk_001",
+    title="Pakistan Ehsaas Senior Citizen Card — Official Application Process",
+    tier=1,
+    url="https://ehsaas.gov.pk/senior-citizen-card",
+    content_snippet=(
+        "The Ehsaas Senior Citizen Card is available to Pakistani citizens aged 60 and above "
+        "who meet the poverty score threshold. Applicants must visit their nearest BISP tehsil "
+        "office with original CNIC, proof of age, and household income evidence. "
+        "The card provides monthly cash transfers directly to the registered bank account or "
+        "mobile wallet — NO OTP or PIN is ever requested via SMS to activate the card. "
+        "Applications are never processed through WhatsApp, SMS links, or third-party agents. "
+        "Verification is done in person at the government office. Helpline: 0800-26477."
+    ),
+    last_verified=date(2026, 1, 15),
+)
+
+SRC_PK_SMS_SCAMS = MockSource(
+    source_id="src_pk_002",
+    title="Pakistan Cyber Crime Wing — SMS Scam Patterns Targeting Elderly Citizens",
+    tier=2,
+    url="https://fia.gov.pk/cybercrime/advisories/sms-scams-elderly",
+    content_snippet=(
+        "Common SMS scam patterns targeting elderly citizens in Pakistan include: "
+        "(1) Fake Ehsaas/BISP grant messages claiming 'your Rs.25,000 benefit has been approved — "
+        "enter OTP to claim'. (2) Fake NADRA messages claiming CNIC has expired and urgent "
+        "renewal is needed via a link. (3) Messages impersonating 1166 (BISP helpline) or "
+        "0800-26477 (Ehsaas) requesting PIN or CNIC on a third-party website. "
+        "Real government agencies NEVER request OTPs, PINs, or passwords via SMS. "
+        "Report suspicious SMS to FIA Cyber Crime: 9911 or email cybercrime@fia.gov.pk."
+    ),
+    last_verified=date(2026, 2, 10),
+)
+
+SRC_NADRA_CNIC = MockSource(
+    source_id="src_pk_003",
+    title="NADRA CNIC Verification and Renewal — Official Process",
+    tier=1,
+    url="https://nadra.gov.pk/cnic-services/renewal",
+    content_snippet=(
+        "NADRA (National Database and Registration Authority) issues and renews CNICs "
+        "at designated NADRA registration centres. Senior citizens aged 65 and above "
+        "receive priority service. Required documents for renewal: expired CNIC, one "
+        "recent passport-size photograph, and proof of address if changed. "
+        "CNIC renewal fees are collected only at the NADRA office — NEVER via SMS, "
+        "WhatsApp, or online payment to individuals. NADRA will NEVER send a link via "
+        "SMS asking you to enter your CNIC number or pay online. "
+        "Helpline: 051-111-786-100. Website: nadra.gov.pk."
+    ),
+    last_verified=date(2025, 12, 20),
+)
+
+SRC_PK_PENSION = MockSource(
+    source_id="src_pk_004",
+    title="Pakistan Pension Directorate — Official Helpline and Application Information",
+    tier=1,
+    url="https://agpr.gov.pk/pension-services",
+    content_snippet=(
+        "The Accountant General Pakistan Revenues (AGPR) manages federal pensions. "
+        "Pensioners must submit a life certificate annually at their nearest bank branch "
+        "or Government Treasury Office — not via SMS or online links. "
+        "Pension payments are deposited directly to the registered bank account; "
+        "no OTP, PIN, or agent fee is ever required. "
+        "For pension-related queries: AGPR helpline 051-9201420. "
+        "Provincial pensions are managed by respective provincial accountant generals. "
+        "Pension scams often claim 'your pension has been suspended — call this number "
+        "immediately'. Always verify by calling the AGPR helpline on the official website."
+    ),
+    last_verified=date(2025, 11, 30),
+)
+
+SRC_FAKE_GOVT_MSG = MockSource(
+    source_id="src_pk_005",
+    title="How to Identify Fake Government Messages — PTA Advisory",
+    tier=2,
+    url="https://pta.gov.pk/consumer-guide/fake-government-messages",
+    content_snippet=(
+        "Pakistan Telecommunication Authority (PTA) advisory on identifying fake government "
+        "messages: (1) Real government SMS come from registered short codes (e.g. 8300 for BISP, "
+        "7000 for NADRA) — not from regular mobile numbers like 0300-XXXXXXX. "
+        "(2) Government messages NEVER contain links asking you to enter personal information. "
+        "(3) Government messages NEVER request OTPs, passwords, or bank account numbers. "
+        "(4) Urgency language like 'act within 24 hours or lose your benefit' is a scam tactic. "
+        "(5) If unsure, call the official helpline using the number from the official website — "
+        "not the number in the suspicious message. Report fake messages to PTA: 0800-55055."
+    ),
+    last_verified=date(2026, 3, 1),
+)
+
+# ---------------------------------------------------------------------------
+# F. Community directory — Tier 4
 # ---------------------------------------------------------------------------
 
 SRC_COMMUNITY_DIRECTORY = MockSource(
@@ -246,6 +339,13 @@ MOCK_SOURCES: list[MockSource] = [
     SRC_HOUSING_SUPPORT,
     SRC_SCAM_ADVISORY,
     SRC_OTP_AWARENESS,
+    # Pakistan-specific sources
+    SRC_PK_SENIOR_CARD,
+    SRC_PK_SMS_SCAMS,
+    SRC_NADRA_CNIC,
+    SRC_PK_PENSION,
+    SRC_FAKE_GOVT_MSG,
+    # Community and unverified
     SRC_COMMUNITY_DIRECTORY,
     SRC_UNVERIFIED_SOCIAL,
 ]
