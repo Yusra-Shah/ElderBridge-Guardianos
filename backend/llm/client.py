@@ -1,12 +1,30 @@
 """
-ElderBridge GuardianOS — Thin Anthropic LLM client wrapper.
+ElderBridge GuardianOS — Azure OpenAI LLM client wrapper.
+
+Uses the openai Python package pointed at an Azure OpenAI endpoint via the
+chat completions API.  Supports both classic Azure OpenAI and Azure AI Foundry
+resources (both expose the same /openai/deployments/... path).
+
+Model note:
+  gpt-5-mini (and other reasoning models like o1/o3) require
+  max_completion_tokens instead of max_tokens, and need a larger budget
+  because internal reasoning tokens are charged against the same limit.
+  The default here is 2048 to ensure reasoning + output both fit.
 
 Security note (SECURITY_MODEL.md §7):
-  API key is read from os.environ["ANTHROPIC_API_KEY"] at call time.
+  All credentials are read from environment variables at call time.
   NEVER hardcode secrets here or anywhere else in the codebase.
 
-Environment variables (set in .env or deployment environment, never in code):
-  ANTHROPIC_API_KEY — Anthropic API key required for LLM calls
+Required environment variables (set in .env or deployment environment):
+  AZURE_OPENAI_API_KEY    — API key for the Azure OpenAI resource
+  AZURE_OPENAI_ENDPOINT   — Resource root URL, e.g.
+                            https://<resource>.openai.azure.com
+                            (NOT the AI Foundry /api/projects/... path)
+  AZURE_OPENAI_DEPLOYMENT — Deployment name, e.g. gpt-5-mini
+
+Optional:
+  AZURE_OPENAI_API_VERSION — api-version query param
+                             (default: 2024-12-01-preview)
 """
 from __future__ import annotations
 
@@ -15,56 +33,89 @@ import os
 
 logger = logging.getLogger("elderbridge.llm.client")
 
-# Model identifier — matches the deployment model for this project
-MODEL = "claude-sonnet-4-6"
-
 
 class LLMUnavailableError(Exception):
     """Raised when the LLM cannot be reached or used for any reason.
 
-    Covers: missing/empty API key, network errors, timeouts, rate limits,
+    Covers: missing/empty env vars, network errors, timeouts, rate limits,
     API-level errors.  Callers should catch this and fall back to rule-based
     responses rather than propagating the error to the user.
     """
 
 
-def call_llm(system_prompt: str, user_message: str, max_tokens: int = 512) -> str:
+def call_llm(system_prompt: str, user_message: str, max_tokens: int = 2048) -> str:
     """
-    Call the Anthropic Messages API and return the text response.
+    Call the Azure OpenAI chat completions endpoint and return the response text.
 
     Args:
-        system_prompt: System-level instructions sent as the ``system`` field.
-        user_message:  User turn content.
-        max_tokens:    Maximum tokens in the model completion (default 512).
+        system_prompt: Content for the ``system`` message.
+        user_message:  Content for the ``user`` message.
+        max_tokens:    Token budget for the completion (default 2048).
+                       Reasoning models like gpt-5-mini consume tokens for
+                       internal reasoning before producing output, so this
+                       needs to be larger than for non-reasoning models.
+                       Passed as ``max_completion_tokens`` in the API call.
 
     Returns:
-        The model's plain-text response string (first content block).
+        The model's plain-text response string.
 
     Raises:
-        LLMUnavailableError: For any failure — missing/empty API key, network
-                             error, timeout, rate limit, or API-level error.
+        LLMUnavailableError: For any failure — missing env vars, network error,
+                             timeout, rate limit, or API-level error.
                              Callers should catch this and fall back gracefully.
     """
-    # Read key at call time so tests can patch os.environ without module-level caching
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
-        raise LLMUnavailableError(
-            "ANTHROPIC_API_KEY is not set or empty. "
-            "Set it in your deployment environment (see .env.example). "
-            "Never hardcode secrets in source code."
+    # Read all credentials at call time so tests can patch os.environ freely
+    api_key    = os.environ.get("AZURE_OPENAI_API_KEY",    "").strip()
+    endpoint   = os.environ.get("AZURE_OPENAI_ENDPOINT",   "").strip()
+    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "").strip()
+    api_version = (
+        os.environ.get("AZURE_OPENAI_API_VERSION", "").strip()
+        or "2024-12-01-preview"
+    )
+
+    missing = [
+        name for name, val in (
+            ("AZURE_OPENAI_API_KEY",    api_key),
+            ("AZURE_OPENAI_ENDPOINT",   endpoint),
+            ("AZURE_OPENAI_DEPLOYMENT", deployment),
         )
+        if not val
+    ]
+    if missing:
+        raise LLMUnavailableError(
+            f"Missing required environment variable(s): {', '.join(missing)}. "
+            "Set them in your .env file. Never hardcode secrets in source code."
+        )
+
+    # Construct the per-deployment base URL that the OpenAI client will use.
+    # The client appends /chat/completions to produce the final request URL:
+    #   {endpoint}/openai/deployments/{deployment}/chat/completions?api-version=...
+    base_url = f"{endpoint.rstrip('/')}/openai/deployments/{deployment}"
 
     try:
-        import anthropic  # deferred import so module loads without package installed
+        from openai import OpenAI  # deferred import so module loads without package installed
 
-        client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
-            model=MODEL,
-            max_tokens=max_tokens,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_message}],
+        logger.debug(
+            "LLM backend: Azure OpenAI base_url=%s api_version=%s",
+            base_url, api_version,
         )
-        return message.content[0].text
+
+        client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            default_query={"api-version": api_version},
+        )
+        response = client.chat.completions.create(
+            model=deployment,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": user_message},
+            ],
+            # Reasoning models (gpt-5-mini, o1, o3, …) require max_completion_tokens.
+            # Non-reasoning models also accept it, so this is safe for all deployments.
+            max_completion_tokens=max_tokens,
+        )
+        return response.choices[0].message.content
     except Exception as exc:
         logger.error("LLM call failed: %s", exc, exc_info=True)
-        raise LLMUnavailableError(f"Anthropic API call failed: {exc}") from exc
+        raise LLMUnavailableError(f"LLM call failed: {exc}") from exc

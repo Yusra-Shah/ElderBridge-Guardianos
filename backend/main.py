@@ -22,6 +22,14 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env from the project root (one level above backend/) before any module
+# reads environment variables.  No-op if the file is absent (production uses
+# real env vars injected by the deployment environment).
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
