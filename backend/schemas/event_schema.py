@@ -1,6 +1,8 @@
 from enum import Enum
 from datetime import datetime
-from pydantic import BaseModel, Field
+from typing import Union
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class EventType(str, Enum):
@@ -30,10 +32,20 @@ class IncomingEvent(BaseModel):
         ),
         max_length=4096,
     )
-    timestamp: datetime = Field(
+    timestamp: Union[datetime, str] = Field(
         ...,
         description="ISO-8601 UTC timestamp of when the event was captured on-device.",
     )
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def parse_timestamp(cls, v: object) -> datetime:
+        if isinstance(v, datetime):
+            return v
+        try:
+            return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(f"Invalid timestamp format: {v!r}") from exc
     user_id: str = Field(
         ...,
         description="Opaque, non-reversible identifier for the user. Never a name or contact value.",

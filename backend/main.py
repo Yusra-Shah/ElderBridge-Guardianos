@@ -24,12 +24,22 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+import os
+
 from dotenv import load_dotenv
 
-# Load .env from the project root (one level above backend/) before any module
-# reads environment variables.  No-op if the file is absent (production uses
-# real env vars injected by the deployment environment).
-load_dotenv(Path(__file__).parent.parent / ".env")
+# Load .env — backend-local first, fall back to project root.  No-op if
+# neither exists (production uses real env vars injected by the deployment
+# environment).
+_env_backend = Path(__file__).parent / ".env"
+_env_root = Path(__file__).parent.parent / ".env"
+if _env_backend.exists():
+    load_dotenv(_env_backend, override=True)
+elif _env_root.exists():
+    load_dotenv(_env_root, override=True)
+
+print(f"[STARTUP] Azure key loaded: {bool(os.environ.get('AZURE_OPENAI_API_KEY'))}")
+print(f"[STARTUP] Deployment: {os.environ.get('AZURE_OPENAI_DEPLOYMENT', 'NOT SET')}")
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware

@@ -107,7 +107,7 @@ class FormAgent:
             "suitable for an elderly person unfamiliar with government forms."
         )
         try:
-            raw_text = call_llm(_SYSTEM_PROMPT, user_message, max_tokens=512)
+            raw_text = call_llm(_SYSTEM_PROMPT, user_message, max_tokens=4096)
             return AgentResponse(
                 agent_name=self.NAME,
                 output_text=raw_text,
