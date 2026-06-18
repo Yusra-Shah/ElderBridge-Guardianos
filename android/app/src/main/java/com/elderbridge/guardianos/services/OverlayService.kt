@@ -239,6 +239,7 @@ class OverlayService : Service() {
                 val decision: FinalDecision = withContext(Dispatchers.IO) {
                     ApiClient.api.analyzeEvent(event)
                 }
+                Log.d(TAG, "analyzeEvent raw response: ${com.google.gson.Gson().toJson(decision)}")
 
                 if (isActive) showResponse(decision)
 
@@ -246,7 +247,7 @@ class OverlayService : Service() {
                 throw e // always rethrow so coroutine framework cancels cleanly
             } catch (e: Exception) {
                 Log.w(TAG, "analyzeEvent failed (${e.javaClass.simpleName}): ${e.message}")
-                if (isActive) showError(snapshot.redactedText)
+                if (isActive) showError(e)
             }
         }
     }
@@ -255,20 +256,12 @@ class OverlayService : Service() {
 
     private fun showResponse(decision: FinalDecision) {
         cardHeaderView?.text = "ElderBridge says:"
-        cardBodyView?.text = buildString {
-            append(decision.responseText)
-            if (decision.nextSteps.isNotEmpty()) {
-                append("\n\nNext steps:")
-                decision.nextSteps.forEach { append("\n• $it") }
-            }
-        }
+        cardBodyView?.text = decision.responseText
     }
 
-    private fun showError(fallbackRedactedText: String) {
+    private fun showError(e: Exception) {
         cardHeaderView?.text = "Connection issue"
-        cardBodyView?.text =
-            "I couldn't reach the assistant right now. " +
-            "Showing what I found on screen instead.\n\n$fallbackRedactedText"
+        cardBodyView?.text = e.message ?: "Request failed"
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
