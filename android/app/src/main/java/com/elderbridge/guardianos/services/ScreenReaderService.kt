@@ -44,8 +44,7 @@ class ScreenReaderService : AccessibilityService() {
         try {
             val sourcePkg = root.packageName?.toString() ?: ""
 
-            // Skip our own UI — no value in reading ElderBridge's own screens
-            if (sourcePkg == packageName) return
+            if (sourcePkg in BLOCKED_PACKAGES) return
 
             val rawText = extractText(root)
             if (rawText.isBlank()) return
@@ -114,5 +113,13 @@ class ScreenReaderService : AccessibilityService() {
         private const val DEBOUNCE_MS = 350L
         private const val MAX_DEPTH = 30
         private const val MAX_CHARS = 4_000
+
+        val BLOCKED_PACKAGES = setOf(
+            "com.android.settings",
+            "com.android.systemui",
+            "com.coloros.wirelesssettings",
+            "com.oppo.launcher",
+            "com.elderbridge.guardianos"
+        )
     }
 }

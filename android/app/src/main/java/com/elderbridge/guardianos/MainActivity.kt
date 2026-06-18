@@ -7,6 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.elderbridge.guardianos.ui.screens.HistoryScreen
 import com.elderbridge.guardianos.ui.screens.HomeScreen
 import com.elderbridge.guardianos.ui.screens.OnboardingScreen
 import com.elderbridge.guardianos.ui.screens.OverlayPreviewScreen
@@ -36,10 +37,16 @@ class MainActivity : ComponentActivity() {
                         })
                     }
                     composable("home") {
-                        HomeScreen(onTryDemo = { navController.navigate("overlay_preview") })
+                        HomeScreen(
+                            onTryDemo = { navController.navigate("overlay_preview") },
+                            onHistory = { navController.navigate("history") }
+                        )
                     }
                     composable("overlay_preview") {
                         OverlayPreviewScreen(onBack = { navController.popBackStack() })
+                    }
+                    composable("history") {
+                        HistoryScreen(onBack = { navController.popBackStack() })
                     }
                 }
             }

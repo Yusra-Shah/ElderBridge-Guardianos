@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -40,7 +41,7 @@ import com.elderbridge.guardianos.ui.theme.ActiveGreen
 import com.elderbridge.guardianos.ui.theme.ActiveGreenLight
 
 @Composable
-fun HomeScreen(onTryDemo: () -> Unit) {
+fun HomeScreen(onTryDemo: () -> Unit, onHistory: () -> Unit) {
     val context = LocalContext.current
     var isMonitoringEnabled by remember { mutableStateOf(false) }
 
@@ -165,6 +166,16 @@ fun HomeScreen(onTryDemo: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
+            Spacer(modifier = Modifier.height(16.dp))
+            OutlinedButton(
+                onClick = onHistory,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text(text = "View History", style = MaterialTheme.typography.labelLarge)
+            }
         }
     }
 }

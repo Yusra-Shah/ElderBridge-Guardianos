@@ -23,6 +23,7 @@ import android.widget.TextView
 import com.elderbridge.guardianos.network.ApiClient
 import com.elderbridge.guardianos.network.FinalDecision
 import com.elderbridge.guardianos.network.IncomingEvent
+import com.elderbridge.guardianos.data.HistoryStore
 import com.elderbridge.guardianos.redaction.ScreenContentHolder
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.CancellationException
@@ -166,10 +167,15 @@ class OverlayService : Service() {
 
         val snapshot = ScreenContentHolder.get()
         val hasContent = snapshot != null && snapshot.redactedText.isNotBlank()
+        val hasEnoughContent = snapshot != null && snapshot.redactedText.length >= 50
 
         // Header label — updated in-place by showResponse / showError
         val headerTv = TextView(this).apply {
-            text = if (hasContent) THINKING_MESSAGES[0] else "Not ready yet"
+            text = when {
+                hasEnoughContent -> THINKING_MESSAGES[0]
+                hasContent       -> "Not enough content to analyse"
+                else             -> "Not ready yet"
+            }
             textSize = 13f
             setTextColor(Color.parseColor("#5E92F3"))
             setPadding(0, 0, 0, (10 * dp).toInt())
@@ -290,7 +296,7 @@ class OverlayService : Service() {
         windowManager.addView(card, cardParams)
         Log.d(TAG, "Overlay card expanded")
 
-        if (hasContent) {
+        if (hasEnoughContent) {
             startAnalysis(snapshot!!)
         }
     }
@@ -339,7 +345,14 @@ class OverlayService : Service() {
                 }
                 Log.d(TAG, "analyzeEvent raw response: ${com.google.gson.Gson().toJson(decision)}")
 
-                if (isActive) showResponse(decision)
+                if (isActive) {
+                    showResponse(decision)
+                    HistoryStore.addEntry(
+                        screenText = snapshot.redactedText,
+                        response = decision.responseText,
+                        riskLevel = decision.riskFlag ?: "none"
+                    )
+                }
 
             } catch (e: CancellationException) {
                 throw e // always rethrow so coroutine framework cancels cleanly
@@ -408,7 +421,14 @@ class OverlayService : Service() {
                     ApiClient.api.analyzeEvent(event)
                 }
                 Log.d(TAG, "sendQuestion response: ${com.google.gson.Gson().toJson(decision)}")
-                if (isActive) showResponse(decision)
+                if (isActive) {
+                    showResponse(decision)
+                    HistoryStore.addEntry(
+                        screenText = combined,
+                        response = decision.responseText,
+                        riskLevel = decision.riskFlag ?: "none"
+                    )
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
