@@ -43,7 +43,7 @@ class LLMUnavailableError(Exception):
     """
 
 
-def call_llm(system_prompt: str, user_message: str, max_tokens: int = 512) -> str:
+def call_llm(system_prompt: str, user_message: str, max_tokens: int = 2048) -> str:
     """
     Call the Azure OpenAI chat completions endpoint and return the response text.
 
@@ -116,7 +116,17 @@ def call_llm(system_prompt: str, user_message: str, max_tokens: int = 512) -> st
             # Non-reasoning models also accept it, so this is safe for all deployments.
             max_completion_tokens=max_tokens,
         )
-        return response.choices[0].message.content
+        content = response.choices[0].message.content
+        if not content:
+            # Reasoning models (gpt-5-mini, o1, o3) can return empty content
+            # when max_completion_tokens is too small to fit both chain-of-thought
+            # and visible output.  Treat as unavailable so callers fall back.
+            finish = response.choices[0].finish_reason
+            raise LLMUnavailableError(
+                f"LLM returned empty content (finish_reason={finish!r}). "
+                "Increase max_completion_tokens or check the token budget."
+            )
+        return content
     except Exception as exc:
         logger.error("LLM call failed: %s", exc, exc_info=True)
         raise LLMUnavailableError(f"LLM call failed: {exc}") from exc

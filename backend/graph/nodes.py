@@ -158,13 +158,9 @@ def node_critic(state: PipelineState) -> PipelineState:
     Run the Critic / Judge Agent over all specialist responses accumulated so far.
 
     Sets: last_critic_response (for introspection / testing / logging).
+    Also sets: draft_response — overrides the baseline text with the best
+    specialist LLM output when one is available (non-fallback, non-empty).
     Reads: event, agent_responses.
-
-    The critic's cleaned output is stored in last_critic_response.output_text.
-    In this milestone the baseline draft_response is still used as the final
-    user-facing text (specialists return stubs); when specialists produce real
-    LLM output in a later milestone, this node will update draft_response from
-    the critic's cleaned combined text.
     """
     event = state["event"]
     responses = state.get("agent_responses", [])
@@ -176,6 +172,23 @@ def node_critic(state: PipelineState) -> PipelineState:
         critic_resp.requires_human_review,
         critic_resp.confidence,
     )
+
+    # Only BenefitsAgent and FormAgent produce user-facing LLM text.
+    # ResearchAgent and others provide supporting evidence, not draft responses.
+    _USER_FACING_AGENTS = {"BenefitsAgent", "FormAgent"}
+    non_fallback = [
+        r for r in responses
+        if not r.used_fallback and r.output_text and r.agent_name in _USER_FACING_AGENTS
+    ]
+    if non_fallback:
+        best = max(non_fallback, key=lambda r: r.confidence)
+        logger.debug(
+            "node_critic | promoting %s output to draft_response (confidence=%.2f)",
+            best.agent_name,
+            best.confidence,
+        )
+        return {**state, "last_critic_response": critic_resp, "draft_response": best.output_text}
+
     return {**state, "last_critic_response": critic_resp}
 
 
