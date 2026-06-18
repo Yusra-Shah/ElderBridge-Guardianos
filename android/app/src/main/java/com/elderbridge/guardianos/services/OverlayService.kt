@@ -266,6 +266,26 @@ class OverlayService : Service() {
         ).apply { bottomMargin = (8 * dp).toInt() })
         card.addView(closeBtn)
 
+        var cardInitX = 0; var cardInitY = 0
+        var cardTouchX = 0f; var cardTouchY = 0f
+        card.setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    cardInitX = cardParams.x; cardInitY = cardParams.y
+                    cardTouchX = event.rawX; cardTouchY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    cardParams.x = cardInitX + (event.rawX - cardTouchX).toInt()
+                    cardParams.y = cardInitY + (event.rawY - cardTouchY).toInt()
+                    windowManager.updateViewLayout(v, cardParams)
+                    true
+                }
+                MotionEvent.ACTION_UP -> true
+                else -> false
+            }
+        }
+
         expandedCard = card
         windowManager.addView(card, cardParams)
         Log.d(TAG, "Overlay card expanded")
@@ -306,12 +326,11 @@ class OverlayService : Service() {
                 // SECURITY: snapshot.redactedText originates from ScreenContentHolder,
                 // which ScreenReaderService writes only after RedactionEngine.redact().
                 // No raw screen text ever reaches this payload.
-                val isoTimestamp = java.time.Instant.ofEpochMilli(snapshot.capturedAtMs).toString()
                 val event = IncomingEvent(
                     eventType = "FORM_SCREEN",
                     sourceApp = snapshot.sourcePackage,
                     redactedText = snapshot.redactedText,
-                    timestamp = isoTimestamp,
+                    timestamp = java.time.Instant.now().toString(),
                     userId = PLACEHOLDER_USER_ID
                 )
 
