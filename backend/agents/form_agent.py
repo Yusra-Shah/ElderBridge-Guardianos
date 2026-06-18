@@ -73,9 +73,10 @@ class FormAgent:
     # -----------------------------------------------------------------------
 
     def _explain_form(self, event: IncomingEvent) -> AgentResponse:
+        redacted_text = event.redacted_text[:500]
         user_message = (
             f"The person is looking at this government form or screen:\n\n"
-            f"{event.redacted_text}\n\n"
+            f"{redacted_text}\n\n"
             "Please explain each visible field in plain, simple language "
             "suitable for an elderly person unfamiliar with government forms."
         )

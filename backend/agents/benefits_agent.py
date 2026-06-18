@@ -142,6 +142,8 @@ class BenefitsAgent:
                 "content. End your response with the standard helpline prompt."
             )
 
+        redacted_text = event.redacted_text[:500]
+
         parts = [
             f"Event type: {event.event_type.value}",
             f"Source app: {event.source_app}",
@@ -149,7 +151,7 @@ class BenefitsAgent:
         if context:
             parts.append(context)
         parts.append(
-            f"Screen content (already redacted of PII): {event.redacted_text}"
+            f"Screen content (already redacted of PII): {redacted_text}"
         )
         parts.append(contact_note)
 
