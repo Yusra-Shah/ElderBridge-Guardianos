@@ -49,8 +49,7 @@ SCAM_FLAG_SIGNALS: list[str] = [
     r"enter\s+(your\s+)?otp",
     r"send\s+(your\s+)?otp",
     r"verify\s+with\s+otp",
-    r"otp\s*(is|=|:)\s*\d",          # OTP value present in input text
-    r"\[redacted_otp\]",              # OTP was redacted by client-side layer
+    r"otp\s*(is|=|:)\s*\d",          # OTP value present in input text (e.g. "OTP is 7823")
     r"enter\s+your\s+pin",
     # Money transfer with explicit amount
     r"transfer\s+(rs\.?|pkr\.?|rs\s|pkr\s)\s*\d",
@@ -109,9 +108,19 @@ class GuardrailAgent:
         return "PASS"
 
     def _check_input(self, text: str) -> str:
-        """Return 'FLAG' if text contains a scam signal, else 'PASS'."""
+        """Return 'FLAG' if text contains a scam signal, else 'PASS'.
+
+        Redaction placeholders inserted by the Android RedactionEngine are stripped
+        before scanning.  This prevents false positives from field labels like
+        '[OTP]' or '[REDACTED_CNIC]' which are safe metadata, not threat signals.
+        """
+        # Strip generic REDACTED[...] placeholders (e.g. [REDACTED_PHONE])
+        clean = re.sub(r'\[REDACTED[^\]]*\]', '', text)
+        # Strip known single-token placeholders used by the Android client
+        clean = re.sub(r'\[OTP\]|\[PHONE\]|\[EMAIL\]|\[CNIC\]', '', clean)
+
         for pat in _COMPILED_SCAM:
-            if pat.search(text):
+            if pat.search(clean):
                 return "FLAG"
         return "PASS"
 
