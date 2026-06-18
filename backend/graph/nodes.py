@@ -16,17 +16,16 @@ Node execution order (set in build_graph.py):
 from __future__ import annotations
 
 import logging
-import re
 
 from agents.benefits_agent import BenefitsAgent
-from agents.critic_agent import CriticAgent, _rewrite as _critic_rewrite
+from agents.critic_agent import CriticAgent
 from agents.form_agent import FormAgent
 from agents.guardrail_agent import GuardrailAgent
 from agents.research_agent import ResearchAgent
 from agents.router_agent import RouterAgent
 from graph.state import PipelineState
 from orchestrator import compute_baseline
-from schemas.decision_schema import AgentResponse, EvidenceItem, FinalDecision, RiskLevel
+from schemas.decision_schema import EvidenceItem, FinalDecision, RiskLevel
 
 logger = logging.getLogger("elderbridge.graph.nodes")
 
@@ -40,51 +39,6 @@ _form = FormAgent()
 _research = ResearchAgent()
 _critic = CriticAgent()
 _guardrail = GuardrailAgent()
-
-
-# ---------------------------------------------------------------------------
-# Response assembly helpers
-# ---------------------------------------------------------------------------
-
-# Agent names whose output_text is user-facing explanation.
-# ResearchAgent output is metadata only — it goes into source_citations.
-_PRIMARY_AGENTS = ("BenefitsAgent", "FormAgent")
-
-
-def _select_primary_text(agent_responses: list[AgentResponse]) -> str:
-    """Return the critic-cleaned output of the primary user-facing agent.
-
-    Prefers BenefitsAgent, then FormAgent. Excludes ResearchAgent because its
-    boilerplate ("I found N sources...") belongs in source_citations, not in
-    the response_text shown to the user.
-    """
-    for name in _PRIMARY_AGENTS:
-        for resp in agent_responses:
-            if resp.agent_name == name and resp.output_text:
-                cleaned, _ = _critic_rewrite(resp.output_text)
-                return cleaned
-    return ""
-
-
-def _parse_steps(text: str) -> tuple[str, list[str]]:
-    """Split LLM output into (main_text, next_steps).
-
-    Lines that start with 'Step:' (case-insensitive) are stripped from the
-    main response and returned as a next_steps list.  Content before the first
-    Step: line becomes the plain response_text.
-    """
-    lines = text.strip().splitlines()
-    content: list[str] = []
-    steps: list[str] = []
-    for line in lines:
-        stripped = line.strip()
-        if re.match(r"^step\s*:", stripped, re.IGNORECASE):
-            body = re.sub(r"^step\s*:\s*", "", stripped, flags=re.IGNORECASE).strip()
-            if body:
-                steps.append(body)
-        elif not steps:
-            content.append(line)
-    return "\n".join(content).strip(), steps
 
 
 # ---------------------------------------------------------------------------
@@ -230,27 +184,30 @@ def node_guardrail(state: PipelineState) -> PipelineState:
     Run the Safety Guardrail Agent — final veto before user delivery.
 
     Sets: final_decision.
-    Reads: event, draft_response, risk_flag, next_steps, evidence_items,
-           agent_responses (used to select the primary user-facing text).
+    Reads: event, draft_response, risk_flag, next_steps, evidence_items.
 
-    Three outcomes:
-      HARD BLOCK (requires_human_review=True, output_text non-empty):
-        AI output itself is dangerous. Uses safe replacement and STOP_AND_VERIFY.
-      SCAM FLAG (requires_human_review=True, output_text empty):
-        Scam detected in input. Passes BenefitsAgent explanation through unchanged
-        with STOP_AND_VERIFY. Source citations cleared.
-      CAUTION / PASSED (requires_human_review=False):
-        Uses primary agent explanation (BenefitsAgent or FormAgent).
-        ResearchAgent boilerplate is excluded from response_text — it goes to
-        source_citations only.  Step: lines from LLM become next_steps.
+    Three outcomes, determined by GuardrailAgent.run() return value:
+
+      HARD BLOCK (output_text non-empty, requires_human_review=True):
+        AI draft output itself contains a dangerous pattern.
+        Uses the guardrail safe-replacement text as response_text.
+        Sets STOP_AND_VERIFY and clears source_citations.
+
+      SCAM FLAG (output_text empty, requires_human_review=True):
+        Scam signal detected in incoming event text.
+        Passes the baseline draft_response through unchanged.
+        Sets STOP_AND_VERIFY and clears source_citations.
+
+      PASS (requires_human_review=False):
+        No violations. Uses baseline draft_response with the existing
+        risk_flag and next_steps computed by node_baseline.
     """
     event = state["event"]
     draft = state.get("draft_response", "")
-    agent_responses = state.get("agent_responses", [])
 
     guardrail_resp = _guardrail.run(event, draft)
 
-    if guardrail_resp.requires_human_review and guardrail_resp.output_text:
+    if guardrail_resp.output_text:
         # HARD BLOCK — AI output is directly dangerous; replace with safe text.
         logger.debug("node_guardrail | result=HARD_BLOCK")
         decision = FinalDecision(
@@ -261,38 +218,22 @@ def node_guardrail(state: PipelineState) -> PipelineState:
         )
 
     elif guardrail_resp.requires_human_review:
-        # SCAM FLAG — dangerous input; pass AI explanation through, override risk.
+        # SCAM FLAG — dangerous input; use baseline draft, override risk.
         logger.debug("node_guardrail | result=SCAM_FLAG")
-        primary = _select_primary_text(agent_responses)
-        main_text, llm_steps = _parse_steps(primary) if primary else ("", [])
         decision = FinalDecision(
-            response_text=main_text or draft,
+            response_text=draft,
             risk_flag=RiskLevel.STOP_AND_VERIFY,
-            next_steps=llm_steps or _guardrail.safe_next_steps,
+            next_steps=_guardrail.safe_next_steps,
             source_citations=[],
         )
 
     else:
-        # CAUTION or PASSED — use primary agent explanation.
-        caution_note = guardrail_resp.output_text  # "" for clean pass
-        logger.debug("node_guardrail | result=%s", "CAUTION" if caution_note else "PASS")
-
-        primary = _select_primary_text(agent_responses)
-        main_text, llm_steps = _parse_steps(primary) if primary else ("", [])
-
-        # main_text is either the full primary response (no Step: found)
-        # or the content before Step: lines (when LLM produced steps).
-        response_part = main_text or draft
-
-        if caution_note:
-            final_text = f"{caution_note}\n\n{response_part}" if response_part else caution_note
-        else:
-            final_text = response_part
-
+        # PASS — no violations; use baseline draft with existing risk metadata.
+        logger.debug("node_guardrail | result=PASS")
         decision = FinalDecision(
-            response_text=final_text,
+            response_text=draft,
             risk_flag=state.get("risk_flag", RiskLevel.SOFT_HELP),
-            next_steps=llm_steps or state.get("next_steps", []),
+            next_steps=state.get("next_steps", []),
             source_citations=state.get("evidence_items", []),
         )
 
