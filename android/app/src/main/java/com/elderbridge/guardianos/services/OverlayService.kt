@@ -15,6 +15,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.speech.tts.TextToSpeech
 import android.widget.TextView
 import com.elderbridge.guardianos.network.ApiClient
 import com.elderbridge.guardianos.network.FinalDecision
@@ -26,9 +27,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 class OverlayService : Service() {
 
@@ -44,12 +47,20 @@ class OverlayService : Service() {
     // Kept so the API response can update in-place without rebuilding the card
     private var cardHeaderView: TextView? = null
     private var cardBodyView: TextView? = null
+    private var readAloudBtn: Button? = null
+
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        tts = TextToSpeech(this) { status ->
+            ttsReady = (status == TextToSpeech.SUCCESS)
+            if (ttsReady) tts?.language = Locale.getDefault()
+        }
         addBubble()
     }
 
@@ -154,7 +165,7 @@ class OverlayService : Service() {
 
         // Header label — updated in-place by showResponse / showError
         val headerTv = TextView(this).apply {
-            text = if (hasContent) "Thinking…" else "Not ready yet"
+            text = if (hasContent) THINKING_MESSAGES[0] else "Not ready yet"
             textSize = 13f
             setTextColor(Color.parseColor("#5E92F3"))
             setPadding(0, 0, 0, (10 * dp).toInt())
@@ -187,6 +198,14 @@ class OverlayService : Service() {
             ))
         }
 
+        val readAloudBtnView = Button(this).apply {
+            text = "Read Aloud"
+            setTextColor(Color.WHITE)
+            background = roundedDrawable(Color.parseColor("#1565C0"), 10 * dp)
+            visibility = View.GONE
+        }
+        readAloudBtn = readAloudBtnView
+
         val closeBtn = Button(this).apply {
             text = "Close"
             setTextColor(Color.WHITE)
@@ -196,6 +215,10 @@ class OverlayService : Service() {
 
         card.addView(headerTv)
         card.addView(bodyScroll)
+        card.addView(readAloudBtnView, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = (8 * dp).toInt() })
         card.addView(closeBtn)
 
         expandedCard = card
@@ -211,8 +234,10 @@ class OverlayService : Service() {
         // Cancel any in-flight API call so a late response can't touch removed views
         analyzeJob?.cancel()
         analyzeJob = null
+        tts?.stop()
         cardHeaderView = null
         cardBodyView = null
+        readAloudBtn = null
         expandedCard?.let { windowManager.removeView(it) }
         expandedCard = null
         Log.d(TAG, "Overlay card collapsed")
@@ -223,6 +248,14 @@ class OverlayService : Service() {
     private fun startAnalysis(snapshot: ScreenContentHolder.ScreenSnapshot) {
         analyzeJob?.cancel()
         analyzeJob = serviceScope.launch {
+            val rotationJob = launch {
+                var i = 0
+                while (isActive) {
+                    cardHeaderView?.text = THINKING_MESSAGES[i % THINKING_MESSAGES.size]
+                    i++
+                    delay(8_000)
+                }
+            }
             try {
                 // SECURITY: snapshot.redactedText originates from ScreenContentHolder,
                 // which ScreenReaderService writes only after RedactionEngine.redact().
@@ -248,6 +281,8 @@ class OverlayService : Service() {
             } catch (e: Exception) {
                 Log.w(TAG, "analyzeEvent failed (${e.javaClass.simpleName}): ${e.message}")
                 if (isActive) showError(e)
+            } finally {
+                rotationJob.cancel()
             }
         }
     }
@@ -257,6 +292,12 @@ class OverlayService : Service() {
     private fun showResponse(decision: FinalDecision) {
         cardHeaderView?.text = "ElderBridge says:"
         cardBodyView?.text = decision.responseText
+        readAloudBtn?.apply {
+            visibility = View.VISIBLE
+            setOnClickListener {
+                if (ttsReady) tts?.speak(decision.responseText, TextToSpeech.QUEUE_FLUSH, null, "eb_tts")
+            }
+        }
     }
 
     private fun showError(e: Exception) {
@@ -269,6 +310,9 @@ class OverlayService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         serviceScope.cancel()       // cancels analyzeJob and all child coroutines
+        tts?.stop()
+        tts?.shutdown()
+        tts = null
         bubbleView?.let { windowManager.removeView(it) }
         collapseCard()
         Log.d(TAG, "OverlayService destroyed")
@@ -292,5 +336,11 @@ class OverlayService : Service() {
 
         // TODO: Replace with a real authenticated user ID when the auth module lands
         private const val PLACEHOLDER_USER_ID = "00000000-0000-0000-0000-000000000001"
+
+        private val THINKING_MESSAGES = listOf(
+            "Checking official sources…",
+            "Analysing your screen…",
+            "Preparing your explanation…"
+        )
     }
 }
