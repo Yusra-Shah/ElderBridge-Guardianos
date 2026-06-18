@@ -66,8 +66,10 @@ BLOCKED_OUTPUT_PATTERNS: list[str] = [
     r"transfer\s+the\s+funds",
 ]
 
-# Hard-stop signals in incoming event text — always BLOCKED regardless of draft.
-# Covers definitive scam/phishing patterns: OTP requests, explicit transfers.
+# Scam-flag signals in incoming event text — triggers STOP_AND_VERIFY risk level
+# but passes the AI-generated explanation through unchanged (not replaced).
+# Narrowed to explicit OTP/PIN/transfer instructions only; plain OTP mentions
+# are intentionally excluded so BenefitsAgent can explain the scam in detail.
 INPUT_RISK_SIGNALS: list[str] = [
     r"enter\s+(your\s+)?otp",
     r"send\s+(your\s+)?otp",
@@ -77,7 +79,8 @@ INPUT_RISK_SIGNALS: list[str] = [
     r"enter\s+your\s+pin",
     r"transfer\s+(rs\.?|pkr\.?|\$)?\s*\d",  # transfer with amount
     r"send\s+(rs\.?|pkr\.?|\$)?\s*\d",
-    r"\botp\b",                       # any mention of OTP in event text
+    # NOTE: r"\botp\b" removed — too broad; catches legitimate scam explanations
+    # from BenefitsAgent that explain why an OTP request is suspicious.
 ]
 
 # Caution-level signals — suspicious but not definitively dangerous.
@@ -182,10 +185,11 @@ class GuardrailAgent:
         if trigger:
             return self._block(f"output pattern matched: '{trigger}'")
 
-        # Pass 2: hard-stop input risk signal check
+        # Pass 2: scam-flag input risk signal check — flag STOP_AND_VERIFY but
+        # do NOT replace the AI response; pass agent explanation through.
         trigger = self._scan(_COMPILED_INPUT, event.redacted_text)
         if trigger:
-            return self._block(f"input risk signal matched: '{trigger}'")
+            return self._flag_scam(f"input risk signal matched: '{trigger}'")
 
         # Pass 3: caution signal check (non-blocking)
         trigger = self._scan(_COMPILED_CAUTION, event.redacted_text)
@@ -208,10 +212,24 @@ class GuardrailAgent:
         )
 
     def _block(self, reason: str) -> AgentResponse:
-        """Return a BLOCKED AgentResponse with the safe replacement message."""
+        """HARD BLOCK: AI output itself is dangerous — replace with safe message."""
         return AgentResponse(
             agent_name=self.NAME,
             output_text=_SAFE_REPLACEMENT,
+            confidence=1.0,
+            sources=[],
+            requires_human_review=True,
+        )
+
+    def _flag_scam(self, reason: str) -> AgentResponse:
+        """SCAM FLAG: scam detected in input — set STOP_AND_VERIFY but pass AI response through.
+
+        Unlike _block(), output_text is empty so the orchestrator uses the
+        agent-generated scam explanation rather than the generic safe replacement.
+        """
+        return AgentResponse(
+            agent_name=self.NAME,
+            output_text="",   # empty → caller uses agent/critic text
             confidence=1.0,
             sources=[],
             requires_human_review=True,

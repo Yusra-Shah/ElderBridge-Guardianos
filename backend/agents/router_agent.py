@@ -54,11 +54,14 @@ class RouterAgent:
 
     NAME = "RouterAgent"
 
-    # Base specialist agents by event type (critic + guardrail added by orchestrator)
+    # Base specialist agents by event type (critic + guardrail added by orchestrator).
+    # FORM_SCREEN routes to FormAgent only; BenefitsAgent is added by secondary routing
+    # when benefit-related keywords (pension, healthcare, grant, etc.) are detected.
+    # This prevents the benefits agent from treating plain CNIC/income fields as scams.
     _BASE_ROUTING: dict[EventType, List[str]] = {
         EventType.SMS: ["ResearchAgent"],
         EventType.NOTIFICATION: ["ResearchAgent"],
-        EventType.FORM_SCREEN: ["FormAgent", "BenefitsAgent"],
+        EventType.FORM_SCREEN: ["FormAgent"],
         EventType.DOCUMENT: ["FormAgent", "BenefitsAgent", "ResearchAgent"],
     }
 

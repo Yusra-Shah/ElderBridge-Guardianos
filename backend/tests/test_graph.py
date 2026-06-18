@@ -90,16 +90,20 @@ class TestGuardrailBlocksThroughGraph:
             f"Expected STOP_AND_VERIFY for OTP SMS, got {decision.risk_flag}"
         )
 
-    def test_blocked_response_text_is_safe(self):
+    def test_blocked_response_text_is_non_empty_and_safe(self):
         event = _make_event(
             EventType.SMS,
             "Enter your OTP immediately. Your account will be closed.",
         )
         decision = run_graph(event)
-        text = decision.response_text.lower()
-        assert "do not share" in text or "do not continue" in text, (
-            f"Safe replacement text missing 'do not share/continue': {decision.response_text}"
+        assert decision.risk_flag == RiskLevel.STOP_AND_VERIFY
+        assert len(decision.response_text) > 0, (
+            "Scam-flagged response must not be empty"
         )
+        # The AI explanation must not instruct the user to share sensitive data
+        text = decision.response_text.lower()
+        assert "enter your otp" not in text
+        assert "share your otp" not in text
 
     def test_blocked_decision_has_next_steps(self):
         event = _make_event(

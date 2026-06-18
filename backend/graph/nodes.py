@@ -208,10 +208,29 @@ def node_guardrail(state: PipelineState) -> PipelineState:
         ),
     )
 
-    if guardrail_resp.requires_human_review:
-        # HARD STOP — override everything with the safe fallback
+    if guardrail_resp.requires_human_review and guardrail_resp.output_text:
+        # HARD BLOCK — AI output itself is dangerous; use safe replacement text.
         decision = FinalDecision(
             response_text=guardrail_resp.output_text,
+            risk_flag=RiskLevel.STOP_AND_VERIFY,
+            next_steps=_guardrail.safe_next_steps,
+            source_citations=[],
+        )
+    elif guardrail_resp.requires_human_review:
+        # SCAM FLAG — scam detected in input; pass through AI-generated explanation
+        # but override risk_flag to STOP_AND_VERIFY and clear source citations.
+        critic_resp = state.get("last_critic_response")
+        agent_text = (
+            critic_resp.output_text
+            if (
+                critic_resp
+                and critic_resp.output_text
+                and "No specialist outputs to review." not in critic_resp.output_text
+            )
+            else ""
+        )
+        decision = FinalDecision(
+            response_text=agent_text or state.get("draft_response", ""),
             risk_flag=RiskLevel.STOP_AND_VERIFY,
             next_steps=_guardrail.safe_next_steps,
             source_citations=[],
