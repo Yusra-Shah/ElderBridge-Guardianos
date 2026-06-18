@@ -81,18 +81,29 @@ class FormAgent:
             "suitable for an elderly person unfamiliar with government forms."
         )
         try:
-            raw_text = call_llm(_SYSTEM_PROMPT, user_message, max_tokens=4096)
-            return AgentResponse(
-                agent_name=self.NAME,
-                output_text=raw_text,
-                confidence=0.8,
-                sources=[],
-                requires_human_review=False,
-                used_fallback=False,
-            )
-        except (LLMUnavailableError, RuntimeError) as exc:
+            raw_text = call_llm(_SYSTEM_PROMPT, user_message, max_tokens=6000)
+        except LLMUnavailableError as exc:
+            if "finish_reason='length'" in str(exc):
+                logger.warning("FormAgent | finish_reason=length, retrying with max_tokens=8000")
+                try:
+                    raw_text = call_llm(_SYSTEM_PROMPT, user_message, max_tokens=8000)
+                except (LLMUnavailableError, RuntimeError) as retry_exc:
+                    logger.warning("FormAgent | retry also failed: %s", retry_exc)
+                    return self._fallback_response()
+            else:
+                logger.warning("FormAgent | LLM unavailable, using fallback: %s", exc)
+                return self._fallback_response()
+        except RuntimeError as exc:
             logger.warning("FormAgent | LLM unavailable, using fallback: %s", exc)
             return self._fallback_response()
+        return AgentResponse(
+            agent_name=self.NAME,
+            output_text=raw_text,
+            confidence=0.8,
+            sources=[],
+            requires_human_review=False,
+            used_fallback=False,
+        )
 
     def _fallback_response(self) -> AgentResponse:
         return AgentResponse(

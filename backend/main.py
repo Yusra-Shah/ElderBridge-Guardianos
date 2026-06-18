@@ -42,6 +42,7 @@ print(f"[STARTUP] Azure key loaded: {bool(os.environ.get('AZURE_OPENAI_API_KEY')
 print(f"[STARTUP] Deployment: {os.environ.get('AZURE_OPENAI_DEPLOYMENT', 'NOT SET')}")
 
 from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -82,6 +83,16 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Exception handlers
 # ---------------------------------------------------------------------------
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    print(f"[422 ERROR] Validation failed: {exc.errors()}")
+    print(f"[422 ERROR] Body: {await request.body()}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+    )
+
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:

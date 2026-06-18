@@ -10,6 +10,9 @@ class EventType(str, Enum):
     FORM_SCREEN = "FORM_SCREEN"
     DOCUMENT = "DOCUMENT"
     NOTIFICATION = "NOTIFICATION"
+    CALL_CONTEXT = "CALL_CONTEXT"
+    PAYMENT_CONTEXT = "PAYMENT_CONTEXT"
+    UNKNOWN = "UNKNOWN"
 
 
 class IncomingEvent(BaseModel):
