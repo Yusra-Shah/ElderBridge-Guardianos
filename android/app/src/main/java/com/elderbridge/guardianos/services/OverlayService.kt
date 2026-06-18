@@ -1,7 +1,9 @@
 package com.elderbridge.guardianos.services
 
+import android.app.AlertDialog
 import android.app.Service
 import android.content.Intent
+import android.net.Uri
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -14,6 +16,7 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.EditText
 import android.widget.ScrollView
 import android.speech.tts.TextToSpeech
 import android.widget.TextView
@@ -47,6 +50,7 @@ class OverlayService : Service() {
     // Kept so the API response can update in-place without rebuilding the card
     private var cardHeaderView: TextView? = null
     private var cardBodyView: TextView? = null
+    private var actionRow: LinearLayout? = null
     private var readAloudBtn: Button? = null
 
     private var tts: TextToSpeech? = null
@@ -200,11 +204,52 @@ class OverlayService : Service() {
 
         val readAloudBtnView = Button(this).apply {
             text = "Read Aloud"
+            textSize = 11f
+            isAllCaps = false
             setTextColor(Color.WHITE)
-            background = roundedDrawable(Color.parseColor("#1565C0"), 10 * dp)
-            visibility = View.GONE
+            background = roundedDrawable(Color.parseColor("#1565C0"), 8 * dp)
         }
         readAloudBtn = readAloudBtnView
+
+        val askBtnView = Button(this).apply {
+            text = "Ask a Question"
+            textSize = 11f
+            isAllCaps = false
+            setTextColor(Color.WHITE)
+            background = roundedDrawable(Color.parseColor("#1565C0"), 8 * dp)
+            setOnClickListener { showAskDialog() }
+        }
+
+        val emergencyBtnView = Button(this).apply {
+            text = "Emergency"
+            textSize = 11f
+            isAllCaps = false
+            setTextColor(Color.WHITE)
+            background = roundedDrawable(Color.parseColor("#C62828"), 8 * dp)
+            setOnClickListener {
+                startActivity(
+                    Intent(Intent.ACTION_DIAL, Uri.parse("tel:1122")).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                )
+            }
+        }
+
+        val actionRowView = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            weightSum = 3f
+            visibility = View.GONE
+        }
+        val gap = (4 * dp).toInt()
+        actionRowView.addView(readAloudBtnView,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { marginEnd = gap })
+        actionRowView.addView(askBtnView,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { marginEnd = gap })
+        actionRowView.addView(emergencyBtnView,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        actionRow = actionRowView
 
         val closeBtn = Button(this).apply {
             text = "Close"
@@ -215,7 +260,7 @@ class OverlayService : Service() {
 
         card.addView(headerTv)
         card.addView(bodyScroll)
-        card.addView(readAloudBtnView, LinearLayout.LayoutParams(
+        card.addView(actionRowView, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { bottomMargin = (8 * dp).toInt() })
@@ -237,6 +282,7 @@ class OverlayService : Service() {
         tts?.stop()
         cardHeaderView = null
         cardBodyView = null
+        actionRow = null
         readAloudBtn = null
         expandedCard?.let { windowManager.removeView(it) }
         expandedCard = null
@@ -292,17 +338,65 @@ class OverlayService : Service() {
     private fun showResponse(decision: FinalDecision) {
         cardHeaderView?.text = "ElderBridge says:"
         cardBodyView?.text = decision.responseText
-        readAloudBtn?.apply {
-            visibility = View.VISIBLE
-            setOnClickListener {
-                if (ttsReady) tts?.speak(decision.responseText, TextToSpeech.QUEUE_FLUSH, null, "eb_tts")
-            }
+        readAloudBtn?.setOnClickListener {
+            if (ttsReady) tts?.speak(decision.responseText, TextToSpeech.QUEUE_FLUSH, null, "eb_tts")
         }
+        actionRow?.visibility = View.VISIBLE
     }
 
     private fun showError(e: Exception) {
         cardHeaderView?.text = "Connection issue"
         cardBodyView?.text = e.message ?: "Request failed"
+    }
+
+    private fun showAskDialog() {
+        val dp = resources.displayMetrics.density
+        val editText = EditText(this).apply {
+            hint = "Type your question…"
+            setPadding((16 * dp).toInt(), (12 * dp).toInt(), (16 * dp).toInt(), (12 * dp).toInt())
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Ask a Question")
+            .setView(editText)
+            .setPositiveButton("Send") { _, _ ->
+                val q = editText.text.toString().trim()
+                if (q.isNotEmpty()) sendQuestion(q)
+            }
+            .setNegativeButton("Cancel", null)
+            .create()
+        @Suppress("DEPRECATION")
+        dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        dialog.show()
+    }
+
+    private fun sendQuestion(question: String) {
+        val snapshot = ScreenContentHolder.get()
+        val screenText = snapshot?.redactedText.orEmpty()
+        val combined = if (screenText.isNotBlank()) "$screenText\n\nUser question: $question" else question
+        analyzeJob?.cancel()
+        analyzeJob = serviceScope.launch {
+            cardHeaderView?.text = "Checking…"
+            cardBodyView?.text = ""
+            try {
+                val event = IncomingEvent(
+                    eventType = "NOTIFICATION",
+                    sourceApp = snapshot?.sourcePackage ?: "unknown",
+                    redactedText = combined,
+                    timestamp = java.time.Instant.now().toString(),
+                    userId = PLACEHOLDER_USER_ID
+                )
+                val decision: FinalDecision = withContext(Dispatchers.IO) {
+                    ApiClient.api.analyzeEvent(event)
+                }
+                Log.d(TAG, "sendQuestion response: ${com.google.gson.Gson().toJson(decision)}")
+                if (isActive) showResponse(decision)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "sendQuestion failed (${e.javaClass.simpleName}): ${e.message}")
+                if (isActive) showError(e)
+            }
+        }
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
