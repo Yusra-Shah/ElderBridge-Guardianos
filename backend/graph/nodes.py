@@ -16,16 +16,17 @@ Node execution order (set in build_graph.py):
 from __future__ import annotations
 
 import logging
+import re
 
 from agents.benefits_agent import BenefitsAgent
-from agents.critic_agent import CriticAgent
+from agents.critic_agent import CriticAgent, _rewrite as _critic_rewrite
 from agents.form_agent import FormAgent
 from agents.guardrail_agent import GuardrailAgent
 from agents.research_agent import ResearchAgent
 from agents.router_agent import RouterAgent
 from graph.state import PipelineState
 from orchestrator import compute_baseline
-from schemas.decision_schema import EvidenceItem, FinalDecision, RiskLevel
+from schemas.decision_schema import AgentResponse, EvidenceItem, FinalDecision, RiskLevel
 
 logger = logging.getLogger("elderbridge.graph.nodes")
 
@@ -39,6 +40,51 @@ _form = FormAgent()
 _research = ResearchAgent()
 _critic = CriticAgent()
 _guardrail = GuardrailAgent()
+
+
+# ---------------------------------------------------------------------------
+# Response assembly helpers
+# ---------------------------------------------------------------------------
+
+# Agent names whose output_text is user-facing explanation.
+# ResearchAgent output is metadata only — it goes into source_citations.
+_PRIMARY_AGENTS = ("BenefitsAgent", "FormAgent")
+
+
+def _select_primary_text(agent_responses: list[AgentResponse]) -> str:
+    """Return the critic-cleaned output of the primary user-facing agent.
+
+    Prefers BenefitsAgent, then FormAgent. Excludes ResearchAgent because its
+    boilerplate ("I found N sources...") belongs in source_citations, not in
+    the response_text shown to the user.
+    """
+    for name in _PRIMARY_AGENTS:
+        for resp in agent_responses:
+            if resp.agent_name == name and resp.output_text:
+                cleaned, _ = _critic_rewrite(resp.output_text)
+                return cleaned
+    return ""
+
+
+def _parse_steps(text: str) -> tuple[str, list[str]]:
+    """Split LLM output into (main_text, next_steps).
+
+    Lines that start with 'Step:' (case-insensitive) are stripped from the
+    main response and returned as a next_steps list.  Content before the first
+    Step: line becomes the plain response_text.
+    """
+    lines = text.strip().splitlines()
+    content: list[str] = []
+    steps: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if re.match(r"^step\s*:", stripped, re.IGNORECASE):
+            body = re.sub(r"^step\s*:\s*", "", stripped, flags=re.IGNORECASE).strip()
+            if body:
+                steps.append(body)
+        elif not steps:
+            content.append(line)
+    return "\n".join(content).strip(), steps
 
 
 # ---------------------------------------------------------------------------
@@ -185,87 +231,68 @@ def node_guardrail(state: PipelineState) -> PipelineState:
 
     Sets: final_decision.
     Reads: event, draft_response, risk_flag, next_steps, evidence_items,
-           last_critic_response (combined agent output).
+           agent_responses (used to select the primary user-facing text).
 
     Three outcomes:
-      BLOCKED (requires_human_review=True):
-        Uses safe replacement text and STOP_AND_VERIFY. Source citations dropped.
-      CAUTION (requires_human_review=False, guardrail_resp.output_text non-empty):
-        Prepends caution note to combined agent/critic output.
-        Risk flag and next_steps come from baseline.
-      PASSED (requires_human_review=False, guardrail_resp.output_text empty):
-        Uses combined agent/critic output as response_text.
-        Falls back to baseline draft_response if no agent output is available.
+      HARD BLOCK (requires_human_review=True, output_text non-empty):
+        AI output itself is dangerous. Uses safe replacement and STOP_AND_VERIFY.
+      SCAM FLAG (requires_human_review=True, output_text empty):
+        Scam detected in input. Passes BenefitsAgent explanation through unchanged
+        with STOP_AND_VERIFY. Source citations cleared.
+      CAUTION / PASSED (requires_human_review=False):
+        Uses primary agent explanation (BenefitsAgent or FormAgent).
+        ResearchAgent boilerplate is excluded from response_text — it goes to
+        source_citations only.  Step: lines from LLM become next_steps.
     """
     event = state["event"]
     draft = state.get("draft_response", "")
+    agent_responses = state.get("agent_responses", [])
 
     guardrail_resp = _guardrail.run(event, draft)
-    logger.debug(
-        "node_guardrail | result=%s",
-        "BLOCKED" if guardrail_resp.requires_human_review else (
-            "CAUTION" if guardrail_resp.output_text else "PASS"
-        ),
-    )
 
     if guardrail_resp.requires_human_review and guardrail_resp.output_text:
-        # HARD BLOCK — AI output itself is dangerous; use safe replacement text.
+        # HARD BLOCK — AI output is directly dangerous; replace with safe text.
+        logger.debug("node_guardrail | result=HARD_BLOCK")
         decision = FinalDecision(
             response_text=guardrail_resp.output_text,
             risk_flag=RiskLevel.STOP_AND_VERIFY,
             next_steps=_guardrail.safe_next_steps,
             source_citations=[],
         )
+
     elif guardrail_resp.requires_human_review:
-        # SCAM FLAG — scam detected in input; pass through AI-generated explanation
-        # but override risk_flag to STOP_AND_VERIFY and clear source citations.
-        critic_resp = state.get("last_critic_response")
-        agent_text = (
-            critic_resp.output_text
-            if (
-                critic_resp
-                and critic_resp.output_text
-                and "No specialist outputs to review." not in critic_resp.output_text
-            )
-            else ""
-        )
+        # SCAM FLAG — dangerous input; pass AI explanation through, override risk.
+        logger.debug("node_guardrail | result=SCAM_FLAG")
+        primary = _select_primary_text(agent_responses)
+        main_text, llm_steps = _parse_steps(primary) if primary else ("", [])
         decision = FinalDecision(
-            response_text=agent_text or state.get("draft_response", ""),
+            response_text=main_text or draft,
             risk_flag=RiskLevel.STOP_AND_VERIFY,
-            next_steps=_guardrail.safe_next_steps,
+            next_steps=llm_steps or _guardrail.safe_next_steps,
             source_citations=[],
         )
+
     else:
-        # Prefer the critic-cleaned combined agent output over the rule-based baseline.
-        # The critic joins all specialist outputs with " | " after overclaim rewriting.
-        # Falls back to baseline if agents produced no meaningful text.
-        critic_resp = state.get("last_critic_response")
-        agent_text = (
-            critic_resp.output_text
-            if (
-                critic_resp
-                and critic_resp.output_text
-                and "No specialist outputs to review." not in critic_resp.output_text
-            )
-            else ""
-        )
-
-        # Guardrail caution note: non-empty only for CAUTION-level events
+        # CAUTION or PASSED — use primary agent explanation.
         caution_note = guardrail_resp.output_text  # "" for clean pass
+        logger.debug("node_guardrail | result=%s", "CAUTION" if caution_note else "PASS")
 
-        if caution_note and agent_text:
-            final_text = f"{caution_note}\n\n{agent_text}"
-        elif caution_note:
-            final_text = f"{caution_note}\n\n{draft}" if draft else caution_note
-        elif agent_text:
-            final_text = agent_text
+        primary = _select_primary_text(agent_responses)
+        main_text, llm_steps = _parse_steps(primary) if primary else ("", [])
+
+        # main_text is either the full primary response (no Step: found)
+        # or the content before Step: lines (when LLM produced steps).
+        response_part = main_text or draft
+
+        if caution_note:
+            final_text = f"{caution_note}\n\n{response_part}" if response_part else caution_note
         else:
-            final_text = draft  # baseline fallback
+            final_text = response_part
 
         decision = FinalDecision(
             response_text=final_text,
             risk_flag=state.get("risk_flag", RiskLevel.SOFT_HELP),
-            next_steps=state.get("next_steps", []),
+            next_steps=llm_steps or state.get("next_steps", []),
             source_citations=state.get("evidence_items", []),
         )
 
