@@ -1,14 +1,17 @@
 package com.elderbridge.guardianos.services
 
+import android.Manifest
 import android.animation.ObjectAnimator
 import android.app.Service
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.IBinder
 import android.util.Log
+import android.widget.Toast
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -322,17 +325,30 @@ class OverlayService : Service() {
             background = roundedDrawable(Color.parseColor("#E65100"), 8 * dp)
             setOnClickListener {
                 val caregiverNumber = UserProfileStore.getCaregiverContact(this@OverlayService)
-                val smsUri = if (caregiverNumber.isNotBlank()) {
-                    Uri.parse("smsto:$caregiverNumber")
+                if (caregiverNumber.isBlank()) {
+                    Toast.makeText(
+                        this@OverlayService,
+                        "Please save a caregiver number in My Profile first",
+                        Toast.LENGTH_LONG
+                    ).show()
                 } else {
-                    Uri.parse("smsto:")  // no saved number — open contact picker
-                }
-                startActivity(
-                    Intent(Intent.ACTION_SENDTO, smsUri).apply {
-                        putExtra("sms_body", "ElderBridge flagged a suspicious message on my phone. Please check on me.")
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    val callUri = Uri.parse("tel:$caregiverNumber")
+                    val hasPermission = checkSelfPermission(Manifest.permission.CALL_PHONE) ==
+                            PackageManager.PERMISSION_GRANTED
+                    if (hasPermission) {
+                        startActivity(
+                            Intent(Intent.ACTION_CALL, callUri).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                        )
+                    } else {
+                        startActivity(
+                            Intent(Intent.ACTION_DIAL, callUri).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                        )
                     }
-                )
+                }
             }
         }
 
