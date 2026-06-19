@@ -48,7 +48,16 @@ _SYSTEM_PROMPT = (
     "Then write: Step: [one action]. Step: [one action].\n\n"
     "Never say you qualify. Always say you may qualify based on the information provided.\n"
     "Never request OTP, PIN, or bank details.\n"
-    "Always verify with the official agency before acting.\n"
+    "Always verify with the official agency before acting.\n\n"
+    "HELPLINE NUMBERS - include the relevant one in your Step 2:\n"
+    "- Ehsaas/BISP helpline: 0800-26477\n"
+    "- NADRA helpline: 051-111-786-100\n"
+    "- Pakistan Citizen Portal: 3939\n"
+    "- Rescue/Emergency: 1122\n"
+    "- Cybercrime reporting: 9911\n"
+    "When the content is about senior citizen benefits, pension, or healthcare: include 0800-26477.\n"
+    "When the content is about CNIC or identity: include 051-111-786-100.\n"
+    "When the content is about a scam or cybercrime: include 9911.\n"
 )
 
 # Regex patterns for extracting official contacts from screen text
@@ -122,7 +131,7 @@ class BenefitsAgent:
         elif event.event_type == EventType.SMS:
             context = "CONTEXT: The person received an SMS message. Check carefully for scam patterns."
         elif event.event_type == EventType.DOCUMENT:
-            context = "CONTEXT: The person is viewing an official document or letter."
+            context = "CONTEXT: The person is viewing a scanned document or official letter, not a live screen."
         elif event.event_type == EventType.NOTIFICATION:
             context = "CONTEXT: The person received a notification. Check for authenticity."
         else:

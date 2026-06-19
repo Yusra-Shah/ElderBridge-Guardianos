@@ -288,7 +288,92 @@ SRC_FAKE_GOVT_MSG = MockSource(
 )
 
 # ---------------------------------------------------------------------------
-# F. Community directory — Tier 4
+# G. Additional Pakistan-specific sources — Tier 1 & 2
+# ---------------------------------------------------------------------------
+
+SRC_FBR_TAX = MockSource(
+    source_id="src_pk_006",
+    title="FBR Tax Helpline Pakistan",
+    tier=1,
+    url="https://fbr.gov.pk/tax-helpline",
+    content_snippet=(
+        "The Federal Board of Revenue (FBR) provides tax assistance for senior citizens "
+        "in Pakistan. Citizens aged 60 and above may be eligible for reduced tax rates and "
+        "simplified filing procedures. Senior citizens can contact the FBR helpline at "
+        "051-111-772-772 for guidance on tax returns, exemptions, and refund status. "
+        "FBR never requests bank PINs, OTPs, or passwords via SMS or phone."
+    ),
+    last_verified=date(2026, 4, 1),
+)
+
+SRC_ZAKAT_USHR = MockSource(
+    source_id="src_pk_007",
+    title="Zakat and Ushr Department Pakistan - Eligibility",
+    tier=1,
+    url="https://zakat.gov.pk/eligibility",
+    content_snippet=(
+        "The Zakat and Ushr Department provides financial assistance to eligible citizens "
+        "including widows, orphans, disabled persons, and destitute elderly. Eligibility is "
+        "determined by a poverty assessment and Zakat committee review at the local level. "
+        "Applicants must submit CNIC, proof of income, and a recommendation from the local "
+        "Zakat committee. Disbursements go directly to bank accounts. No agent fee or OTP "
+        "is ever required."
+    ),
+    last_verified=date(2026, 3, 15),
+)
+
+SRC_BAITUL_MAAL = MockSource(
+    source_id="src_pk_008",
+    title="Pakistan Baitul Maal - Social Protection Programs",
+    tier=1,
+    url="https://pbm.gov.pk/social-protection",
+    content_snippet=(
+        "Pakistan Baitul Maal (PBM) runs social protection programs including Individual "
+        "Financial Assistance for medical treatment, education stipends, and support for "
+        "destitute citizens. Senior citizens can apply for medical assistance covering "
+        "hospitalization and treatment costs. Applications are submitted at PBM district "
+        "offices with CNIC, medical reports, and income evidence. PBM never contacts "
+        "beneficiaries via SMS links or requests OTPs."
+    ),
+    last_verified=date(2026, 2, 20),
+)
+
+SRC_PHONE_SCAMS_2025 = MockSource(
+    source_id="src_pk_009",
+    title="Common Phone Scam Patterns in Pakistan 2025",
+    tier=2,
+    url="https://fia.gov.pk/cybercrime/scam-patterns-2025",
+    content_snippet=(
+        "FIA Cyber Crime Wing reports the most common phone scam patterns in Pakistan: "
+        "(1) Fake prize messages claiming you won a lottery from Jazz, Telenor, or Ufone. "
+        "(2) SMS impersonating BISP/Ehsaas claiming benefit approval with a link to claim. "
+        "(3) Calls pretending to be from NADRA saying CNIC is blocked and demanding fees. "
+        "(4) WhatsApp messages with fake government job offers requiring registration fees. "
+        "(5) Voice calls claiming to be from SBP saying your bank account is frozen. "
+        "Report all scams to FIA Cyber Crime: 9911."
+    ),
+    last_verified=date(2026, 5, 1),
+)
+
+SRC_VERIFY_GOVT_WEBSITES = MockSource(
+    source_id="src_pk_010",
+    title="How to Verify Government Websites in Pakistan",
+    tier=1,
+    url="https://moitt.gov.pk/verify-government-websites",
+    content_snippet=(
+        "Official Pakistani government websites always use the .gov.pk domain. Examples: "
+        "nadra.gov.pk, fbr.gov.pk, ehsaas.gov.pk, bisp.gov.pk. Any website using .com, "
+        ".info, .net, or .org claiming to be a government service is NOT official. "
+        "Real government communication comes from registered short codes (8300 for BISP, "
+        "7000 for NADRA), not regular mobile numbers. Government websites use HTTPS and "
+        "display a valid security certificate. When in doubt, type the .gov.pk address "
+        "directly into your browser instead of clicking any link."
+    ),
+    last_verified=date(2026, 4, 15),
+)
+
+# ---------------------------------------------------------------------------
+# H. Community directory — Tier 4
 # ---------------------------------------------------------------------------
 
 SRC_COMMUNITY_DIRECTORY = MockSource(
@@ -345,6 +430,12 @@ MOCK_SOURCES: list[MockSource] = [
     SRC_NADRA_CNIC,
     SRC_PK_PENSION,
     SRC_FAKE_GOVT_MSG,
+    # Additional Pakistan-specific sources
+    SRC_FBR_TAX,
+    SRC_ZAKAT_USHR,
+    SRC_BAITUL_MAAL,
+    SRC_PHONE_SCAMS_2025,
+    SRC_VERIFY_GOVT_WEBSITES,
     # Community and unverified
     SRC_COMMUNITY_DIRECTORY,
     SRC_UNVERIFIED_SOCIAL,

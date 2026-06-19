@@ -20,7 +20,9 @@ Environment variables (set in deployment environment, never in code):
 """
 from __future__ import annotations
 
+import hashlib
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -51,6 +53,19 @@ from schemas.decision_schema import FinalDecision
 from schemas.event_schema import IncomingEvent
 
 logger = logging.getLogger("elderbridge")
+
+# ---------------------------------------------------------------------------
+# Response cache — avoids re-running the full pipeline when the user taps
+# the same bubble twice within 5 minutes.
+# ---------------------------------------------------------------------------
+_response_cache: dict[str, tuple[float, FinalDecision]] = {}
+_CACHE_TTL = 300  # 5 minutes
+
+
+def _cache_key(event: IncomingEvent) -> str:
+    raw = f"{event.event_type.value}:{event.redacted_text}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
 
 # Increment this on every milestone/release.
 _VERSION = "0.4.0"
@@ -155,4 +170,15 @@ async def analyze_event(event: IncomingEvent) -> FinalDecision:
         # log-based data retention surface (SECURITY_MODEL.md §9).
     )
 
-    return run_graph(event)
+    key = _cache_key(event)
+    cached = _response_cache.get(key)
+    if cached:
+        cached_time, cached_result = cached
+        if time.time() - cached_time < _CACHE_TTL:
+            logger.info("analyze-event | cache hit for user=%s", event.user_id)
+            return cached_result
+        del _response_cache[key]
+
+    result = run_graph(event)
+    _response_cache[key] = (time.time(), result)
+    return result
