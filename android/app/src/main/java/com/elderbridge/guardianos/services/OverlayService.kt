@@ -49,7 +49,8 @@ class OverlayService : Service() {
     private var bubblePulseAnim: ObjectAnimator? = null
     private var expandedCard: View? = null
     private var expandedCardParams: WindowManager.LayoutParams? = null
-    private var isBubbleExpanded = false
+    private var menuView: View? = null
+    private var bubbleParams: WindowManager.LayoutParams? = null
 
     // Coroutine scope tied to this service's lifetime; cancelled in onDestroy
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -110,6 +111,7 @@ class OverlayService : Service() {
             x = 0
             y = 200
         }
+        bubbleParams = params
 
         val frame = FrameLayout(this)
         frame.background = circleDrawable(Color.parseColor("#1565C0"))
@@ -185,11 +187,103 @@ class OverlayService : Service() {
     // ── Card lifecycle ────────────────────────────────────────────────────────
 
     private fun toggleExpanded() {
-        if (isBubbleExpanded) collapseCard() else expandCard()
-        isBubbleExpanded = !isBubbleExpanded
+        if (menuView != null) hideMenu() else showMenu()
     }
 
-    private fun expandCard() {
+    // ── Quick-action menu ─────────────────────────────────────────────────────
+
+    private fun showMenu() {
+        if (bubbleParams == null) return
+        if (menuView != null) { hideMenu(); return }
+        val dp = resources.displayMetrics.density
+        val bx = bubbleParams?.x ?: 0
+        val by = bubbleParams?.y ?: 200
+
+        val menuParams = WindowManager.LayoutParams(
+            (170 * dp).toInt(),
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = bx + (70 * dp).toInt()
+            y = by
+        }
+
+        val pad = (10 * dp).toInt()
+        val gap = (6 * dp).toInt()
+        val menu = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad, pad, pad)
+            background = roundedDrawable(Color.parseColor("#1A237E"), 12 * dp)
+        }
+
+        fun addBtn(label: String, color: String, last: Boolean = false, onClick: () -> Unit) {
+            val btn = Button(this).apply {
+                text = label
+                textSize = 13f
+                isAllCaps = false
+                setTextColor(Color.WHITE)
+                background = roundedDrawable(Color.parseColor(color), 8 * dp)
+                setOnClickListener { onClick() }
+            }
+            menu.addView(btn, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { if (!last) bottomMargin = gap })
+        }
+
+        addBtn("Search Screen",  "#1565C0") { hideMenu(); expandCard() }
+        addBtn("Ask a Question", "#1565C0") { hideMenu(); expandCard(startInChatMode = true) }
+        addBtn("Emergency 1122", "#C62828") { hideMenu(); doEmergencyCall() }
+        addBtn("Alert Family",   "#E65100") { hideMenu(); doAlertFamily() }
+        addBtn("Close Menu",     "#37474F", last = true) { hideMenu() }
+
+        menuView = menu
+        try {
+            windowManager.addView(menu, menuParams)
+        } catch (e: Exception) {
+            Log.e(TAG, "showMenu addView failed: ${e.message}")
+        }
+        Log.d(TAG, "Menu shown")
+    }
+
+    private fun hideMenu() {
+        menuView?.let {
+            try { windowManager.removeView(it) } catch (e: Exception) { Log.w(TAG, "hideMenu removeView: ${e.message}") }
+        }
+        menuView = null
+        Log.d(TAG, "Menu hidden")
+    }
+
+    private fun doEmergencyCall() {
+        startActivity(
+            Intent(Intent.ACTION_DIAL, Uri.parse("tel:1122")).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+        )
+    }
+
+    private fun doAlertFamily() {
+        val caregiverNumber = UserProfileStore.getCaregiverContact(this)
+        if (caregiverNumber.isBlank()) {
+            Toast.makeText(this, "Please save a caregiver number in My Profile first", Toast.LENGTH_LONG).show()
+        } else {
+            val callUri = Uri.parse("tel:$caregiverNumber")
+            val hasPermission = checkSelfPermission(Manifest.permission.CALL_PHONE) ==
+                    PackageManager.PERMISSION_GRANTED
+            startActivity(
+                Intent(if (hasPermission) Intent.ACTION_CALL else Intent.ACTION_DIAL, callUri).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+            )
+        }
+    }
+
+    // ── Card lifecycle ────────────────────────────────────────────────────────
+
+    private fun expandCard(startInChatMode: Boolean = false) {
         if (expandedCard != null) {
             try { windowManager.removeView(expandedCard) } catch (e: Exception) {}
             expandedCard = null
@@ -305,13 +399,7 @@ class OverlayService : Service() {
             isAllCaps = false
             setTextColor(Color.WHITE)
             background = roundedDrawable(Color.parseColor("#C62828"), 8 * dp)
-            setOnClickListener {
-                startActivity(
-                    Intent(Intent.ACTION_DIAL, Uri.parse("tel:1122")).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                )
-            }
+            setOnClickListener { doEmergencyCall() }
         }
 
         val alertFamilyBtnView = Button(this).apply {
@@ -320,33 +408,7 @@ class OverlayService : Service() {
             isAllCaps = false
             setTextColor(Color.WHITE)
             background = roundedDrawable(Color.parseColor("#E65100"), 8 * dp)
-            setOnClickListener {
-                val caregiverNumber = UserProfileStore.getCaregiverContact(this@OverlayService)
-                if (caregiverNumber.isBlank()) {
-                    Toast.makeText(
-                        this@OverlayService,
-                        "Please save a caregiver number in My Profile first",
-                        Toast.LENGTH_LONG
-                    ).show()
-                } else {
-                    val callUri = Uri.parse("tel:$caregiverNumber")
-                    val hasPermission = checkSelfPermission(Manifest.permission.CALL_PHONE) ==
-                            PackageManager.PERMISSION_GRANTED
-                    if (hasPermission) {
-                        startActivity(
-                            Intent(Intent.ACTION_CALL, callUri).apply {
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            }
-                        )
-                    } else {
-                        startActivity(
-                            Intent(Intent.ACTION_DIAL, callUri).apply {
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            }
-                        )
-                    }
-                }
-            }
+            setOnClickListener { doAlertFamily() }
         }
 
         val actionRowView = LinearLayout(this).apply {
@@ -442,7 +504,7 @@ class OverlayService : Service() {
             text = "Close"
             setTextColor(Color.WHITE)
             background = roundedDrawable(Color.parseColor("#1565C0"), 10 * dp)
-            setOnClickListener { collapseCard(); isBubbleExpanded = false }
+            setOnClickListener { collapseCard() }
         }
 
         card.addView(headerRow, LinearLayout.LayoutParams(
@@ -488,18 +550,22 @@ class OverlayService : Service() {
         }
         Log.d(TAG, "Overlay card expanded")
 
-        val saved = savedResponse
-        if (saved != null) {
-            savedResponse = null
-            currentAiResponse = saved.bodyText
-            cardHeaderView?.text = saved.headerText
-            cardBodyView?.text = saved.bodyText
-            readAloudBtn?.setOnClickListener {
-                if (ttsReady) tts?.speak(saved.bodyText, TextToSpeech.QUEUE_FLUSH, null, "eb_tts")
+        if (startInChatMode) {
+            enterChatMode()
+        } else {
+            val saved = savedResponse
+            if (saved != null) {
+                savedResponse = null
+                currentAiResponse = saved.bodyText
+                cardHeaderView?.text = saved.headerText
+                cardBodyView?.text = saved.bodyText
+                readAloudBtn?.setOnClickListener {
+                    if (ttsReady) tts?.speak(saved.bodyText, TextToSpeech.QUEUE_FLUSH, null, "eb_tts")
+                }
+                actionRow?.visibility = View.VISIBLE
+            } else if (hasEnoughContent) {
+                startAnalysis(snapshot!!)
             }
-            actionRow?.visibility = View.VISIBLE
-        } else if (hasEnoughContent) {
-            startAnalysis(snapshot!!)
         }
     }
 
@@ -549,7 +615,6 @@ class OverlayService : Service() {
         }
         expandedCard = null
         expandedCardParams = null
-        isBubbleExpanded = false
         Log.d(TAG, "Overlay card minimized")
     }
 
@@ -777,6 +842,7 @@ class OverlayService : Service() {
         tts?.stop()
         tts?.shutdown()
         tts = null
+        hideMenu()
         bubbleView?.let {
             try { windowManager.removeView(it) } catch (e: Exception) { Log.w(TAG, "removeView bubble: ${e.message}") }
         }
