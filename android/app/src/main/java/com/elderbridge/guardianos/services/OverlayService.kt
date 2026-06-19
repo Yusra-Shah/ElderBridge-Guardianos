@@ -126,13 +126,17 @@ class OverlayService : Service() {
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
-        // Small red circle in the top-right corner — tapping stops the service entirely
+        // X button is a separate clickable child — Android dispatches its tap before
+        // the parent frame's onTouchListener, so no coordinate detection is needed.
         val xBtn = TextView(this).apply {
             text = "✕"
             textSize = 10f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             background = circleDrawable(Color.parseColor("#C62828"))
+            isFocusable = false
+            isClickable = true
+            setOnClickListener { stopSelf() }
         }
         frame.addView(xBtn, FrameLayout.LayoutParams(xBtnPx, xBtnPx).apply {
             gravity = Gravity.TOP or Gravity.END
@@ -143,13 +147,10 @@ class OverlayService : Service() {
         var touchX = 0f
         var touchY = 0f
         var dragged = false
-        var touchedX = false  // true when ACTION_DOWN lands on the X button
 
         frame.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    // Detect whether touch started inside the X button area (top-right corner)
-                    touchedX = event.x >= (bubblePx - xBtnPx) && event.y <= xBtnPx
                     initX = params.x; initY = params.y
                     touchX = event.rawX; touchY = event.rawY
                     dragged = false
@@ -159,18 +160,13 @@ class OverlayService : Service() {
                     val dx = (event.rawX - touchX).toInt()
                     val dy = (event.rawY - touchY).toInt()
                     if (kotlin.math.abs(dx) > 8 || kotlin.math.abs(dy) > 8) dragged = true
-                    if (!touchedX) {
-                        params.x = initX + dx
-                        params.y = initY + dy
-                        windowManager.updateViewLayout(frame, params)
-                    }
+                    params.x = initX + dx
+                    params.y = initY + dy
+                    windowManager.updateViewLayout(frame, params)
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    when {
-                        touchedX && !dragged -> stopSelf()
-                        !touchedX && !dragged -> toggleExpanded()
-                    }
+                    if (!dragged) toggleExpanded()
                     true
                 }
                 else -> false
@@ -220,6 +216,7 @@ class OverlayService : Service() {
         }
 
         val snapshot = ScreenContentHolder.get()
+        Log.d(TAG, "expandCard: snapshot=${snapshot?.redactedText?.length} chars")
         val hasContent = snapshot != null && snapshot.redactedText.isNotBlank()
         val hasEnoughContent = snapshot != null && snapshot.redactedText.length >= 50
 
