@@ -46,6 +46,18 @@ _SCAM_ESCALATION_SIGNALS = [
     "otp", "[redacted_otp]", "password", "cnic", "[redacted_cnic]",
     "transfer", "send money", "urgent", "immediately", "expire",
     "suspended", "blocked", "arrest", "threat",
+    # Prize/lottery scams
+    "won", "prize", "lucky draw", "lottery", "congratulations",
+    # Telecom scams
+    "recharge", "sim block", "network upgrade", "verify sim",
+    # Job scams
+    "job offer", "earn from home", "part time", "online work",
+    # Delivery scams
+    "parcel", "package", "courier", "customs", "held",
+    # Bank scams
+    "account block", "kyc update", "verify account", "atm blocked",
+    # Romanized Urdu scam patterns
+    "mubarak", "inaam", "inam", "khata",
 ]
 
 

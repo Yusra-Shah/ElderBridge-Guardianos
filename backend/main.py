@@ -48,6 +48,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from pydantic import BaseModel
+
 from graph.build_graph import run_graph
 from schemas.decision_schema import FinalDecision
 from schemas.event_schema import IncomingEvent
@@ -175,6 +177,7 @@ async def analyze_event(event: IncomingEvent) -> FinalDecision:
     if cached:
         cached_time, cached_result = cached
         if time.time() - cached_time < _CACHE_TTL:
+            print(f"[CACHE] Hit for event {key[:8]}")
             logger.info("analyze-event | cache hit for user=%s", event.user_id)
             return cached_result
         del _response_cache[key]
@@ -182,3 +185,30 @@ async def analyze_event(event: IncomingEvent) -> FinalDecision:
     result = run_graph(event)
     _response_cache[key] = (time.time(), result)
     return result
+
+
+# ---------------------------------------------------------------------------
+# User profile — in-memory storage for demo
+# ---------------------------------------------------------------------------
+
+class UserProfile(BaseModel):
+    name: str | None = None
+    location: str | None = None
+    emergency_contact: str | None = None
+    caregiver_contact: str | None = None
+    language: str | None = None
+
+_user_profiles: dict[str, dict] = {}
+
+
+@app.post("/user-profile", tags=["profile"])
+async def save_user_profile(user_id: str, profile: UserProfile) -> dict:
+    """Store a user profile in memory (demo — no database)."""
+    _user_profiles[user_id] = profile.model_dump(exclude_none=True)
+    return {"status": "saved"}
+
+
+@app.get("/user-profile/{user_id}", tags=["profile"])
+async def get_user_profile(user_id: str) -> dict:
+    """Retrieve a stored user profile, or empty dict if not found."""
+    return _user_profiles.get(user_id, {})

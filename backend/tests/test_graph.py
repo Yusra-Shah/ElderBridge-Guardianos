@@ -25,6 +25,7 @@ from unittest.mock import patch
 import pytest
 
 from agents.benefits_agent import BenefitsAgent
+from llm.client import LLMUnavailableError
 from graph.build_graph import (
     CompiledGraph,
     PipelineGraph,
@@ -254,7 +255,8 @@ class TestCriticRewriteThroughGraph:
         assert "guaranteed" not in out
         assert "possibly available" in out
 
-    def test_run_graph_does_not_crash_with_overclaiming_specialist(self):
+    @patch("agents.form_agent.call_llm_race", side_effect=LLMUnavailableError("test"))
+    def test_run_graph_does_not_crash_with_overclaiming_specialist(self, _mock_llm):
         """
         Even if a specialist (mocked) returns overclaiming text, run_graph()
         must complete and return a valid FinalDecision without raising.

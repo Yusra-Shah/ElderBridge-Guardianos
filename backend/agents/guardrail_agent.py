@@ -23,6 +23,26 @@ from schemas.decision_schema import AgentResponse
 from schemas.event_schema import IncomingEvent
 
 # ---------------------------------------------------------------------------
+# Safe context patterns — skip scam flagging for legitimate documents
+# ---------------------------------------------------------------------------
+
+SAFE_CONTEXTS: list[str] = [
+    r"lab\s*report", r"laboratory", r"hospital", r"clinic",
+    r"patient\s*name", r"specimen", r"test\s*result",
+    r"pdf\s*report", r"medical\s*report", r"discharge",
+    r"prescription", r"diagnosis",
+    r"invoice", r"receipt", r"utility\s*bill", r"electricity",
+    r"gas\s*bill", r"wapda", r"sngpl", r"k-electric",
+    r"bank\s*statement", r"salary\s*slip",
+    r"university", r"college", r"admission", r"result\s*card",
+    r"fee\s*challan", r"examination",
+]
+
+_COMPILED_SAFE: list[re.Pattern[str]] = [
+    re.compile(p, re.IGNORECASE) for p in SAFE_CONTEXTS
+]
+
+# ---------------------------------------------------------------------------
 # Pattern lists
 # ---------------------------------------------------------------------------
 
@@ -113,7 +133,15 @@ class GuardrailAgent:
         Redaction placeholders inserted by the Android RedactionEngine are stripped
         before scanning.  This prevents false positives from field labels like
         '[OTP]' or '[REDACTED_CNIC]' which are safe metadata, not threat signals.
+
+        Legitimate documents (medical reports, utility bills, bank statements,
+        educational docs) are never flagged as scams.
         """
+        # Safe contexts bypass scam detection entirely
+        for pat in _COMPILED_SAFE:
+            if pat.search(text):
+                return "PASS"
+
         # Strip generic REDACTED[...] placeholders (e.g. [REDACTED_PHONE])
         clean = re.sub(r'\[REDACTED[^\]]*\]', '', text)
         # Strip known single-token placeholders used by the Android client

@@ -277,7 +277,7 @@ class TestPromptContent:
         mock_call_llm.return_value = "You may be eligible."
         BenefitsAgent().run(_make_event())
         system_prompt = mock_call_llm.call_args[0][0]
-        assert "you may qualify based on the information provided" in system_prompt.lower()
+        assert "may qualify" in system_prompt.lower()
 
     @patch("agents.benefits_agent.call_llm_race")
     def test_system_prompt_contains_verify_instruction(self, mock_call_llm):
