@@ -84,12 +84,17 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            "ElderBridge:AssistantLock"
-        )
-        wakeLock?.acquire(10 * 60 * 1000L) // 10 minutes max
+        try {
+            val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "ElderBridge:AssistantLock"
+            )
+            wakeLock?.acquire(10 * 60 * 1000L) // 10 minutes max
+        } catch (e: Exception) {
+            Log.w(TAG, "WakeLock acquisition failed: ${e.message}")
+            wakeLock = null
+        }
         tts = TextToSpeech(this) { status ->
             ttsReady = (status == TextToSpeech.SUCCESS)
             if (ttsReady) tts?.language = Locale.getDefault()
@@ -504,7 +509,9 @@ class OverlayService : Service() {
         chatScrollView = null
         chatMessagesContainer = null
         chatEditText = null
-        expandedCard?.let { windowManager.removeView(it) }
+        expandedCard?.let {
+            try { windowManager.removeView(it) } catch (e: Exception) { Log.w(TAG, "removeView card: ${e.message}") }
+        }
         expandedCard = null
         expandedCardParams = null
         Log.d(TAG, "Overlay card collapsed")
@@ -525,7 +532,9 @@ class OverlayService : Service() {
         chatScrollView = null
         chatMessagesContainer = null
         chatEditText = null
-        expandedCard?.let { windowManager.removeView(it) }
+        expandedCard?.let {
+            try { windowManager.removeView(it) } catch (e: Exception) { Log.w(TAG, "removeView card: ${e.message}") }
+        }
         expandedCard = null
         expandedCardParams = null
         isBubbleExpanded = false
@@ -751,14 +760,21 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        if (wakeLock?.isHeld == true) wakeLock?.release()
+        try {
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+        } catch (e: Exception) {
+            Log.w(TAG, "WakeLock release failed: ${e.message}")
+        }
         wakeLock = null
         serviceScope.cancel()       // cancels analyzeJob and all child coroutines
         stopBubblePulse()
         tts?.stop()
         tts?.shutdown()
         tts = null
-        bubbleView?.let { windowManager.removeView(it) }
+        bubbleView?.let {
+            try { windowManager.removeView(it) } catch (e: Exception) { Log.w(TAG, "removeView bubble: ${e.message}") }
+        }
+        bubbleView = null
         collapseCard()
         Log.d(TAG, "OverlayService destroyed")
     }
