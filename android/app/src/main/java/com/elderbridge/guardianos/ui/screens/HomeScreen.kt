@@ -1,5 +1,9 @@
 package com.elderbridge.guardianos.ui.screens
 
+import android.content.Intent
+import android.os.Build
+import android.provider.Settings
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -29,13 +34,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.elderbridge.guardianos.data.UserProfileStore
+import com.elderbridge.guardianos.services.OverlayService
+import com.elderbridge.guardianos.services.ScreenReaderService
 import com.elderbridge.guardianos.ui.theme.ActiveGreen
 import com.elderbridge.guardianos.ui.theme.ActiveGreenLight
 
 @Composable
-fun HomeScreen(onTryDemo: () -> Unit) {
-    var isMonitoringEnabled by remember { mutableStateOf(false) }
+fun HomeScreen(onTryDemo: () -> Unit, onHistory: () -> Unit, onProfile: () -> Unit) {
+    val context = LocalContext.current
+    var isMonitoringEnabled by remember { mutableStateOf(UserProfileStore.isAssistantEnabled(context)) }
 
     Column(
         modifier = Modifier
@@ -100,7 +110,44 @@ fun HomeScreen(onTryDemo: () -> Unit) {
                     }
                     Switch(
                         checked = isMonitoringEnabled,
-                        onCheckedChange = { isMonitoringEnabled = it },
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                if (!Settings.canDrawOverlays(context)) {
+                                    Toast.makeText(
+                                        context,
+                                        "Please grant Display Over Apps permission first",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                } else {
+                                    val enabledServices = Settings.Secure.getString(
+                                        context.contentResolver,
+                                        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                                    ) ?: ""
+                                    val component =
+                                        "${context.packageName}/${ScreenReaderService::class.java.name}"
+                                    if (!enabledServices.contains(component, ignoreCase = true)) {
+                                        Toast.makeText(
+                                            context,
+                                            "Please enable ElderBridge in Accessibility Settings first",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    } else {
+                                        val intent = Intent(context, OverlayService::class.java)
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                            context.startForegroundService(intent)
+                                        } else {
+                                            context.startService(intent)
+                                        }
+                                        UserProfileStore.setAssistantEnabled(context, true)
+                                        isMonitoringEnabled = true
+                                    }
+                                }
+                            } else {
+                                context.stopService(Intent(context, OverlayService::class.java))
+                                UserProfileStore.setAssistantEnabled(context, false)
+                                isMonitoringEnabled = false
+                            }
+                        },
                         colors = SwitchDefaults.colors(
                             checkedTrackColor = ActiveGreen,
                             checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
@@ -128,6 +175,26 @@ fun HomeScreen(onTryDemo: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
+            Spacer(modifier = Modifier.height(16.dp))
+            OutlinedButton(
+                onClick = onHistory,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text(text = "View History", style = MaterialTheme.typography.labelLarge)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = onProfile,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text(text = "My Profile", style = MaterialTheme.typography.labelLarge)
+            }
         }
     }
 }

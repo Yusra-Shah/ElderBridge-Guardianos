@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Network security configuration for ElderBridge GuardianOS.
+
+  TODO (before production): Replace the base-config below with a domain-config
+  that pins the certificate of the production HTTPS API. The permissive base-config
+  here exists only for local LAN development and demo testing where the backend
+  runs over plain HTTP on a local IP address.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
