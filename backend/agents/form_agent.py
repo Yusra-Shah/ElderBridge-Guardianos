@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 
-from llm.client import LLMUnavailableError, call_llm
+from llm.client import LLMUnavailableError, call_llm, call_llm_race
 from schemas.decision_schema import AgentResponse
 from schemas.event_schema import EventType, IncomingEvent
 
@@ -81,12 +81,12 @@ class FormAgent:
             "suitable for an elderly person unfamiliar with government forms."
         )
         try:
-            raw_text = call_llm(_SYSTEM_PROMPT, user_message, max_tokens=6000)
+            raw_text = call_llm_race(_SYSTEM_PROMPT, user_message, max_tokens=6000)
         except LLMUnavailableError as exc:
             if "finish_reason='length'" in str(exc):
                 logger.warning("FormAgent | finish_reason=length, retrying with max_tokens=8000")
                 try:
-                    raw_text = call_llm(_SYSTEM_PROMPT, user_message, max_tokens=8000)
+                    raw_text = call_llm_race(_SYSTEM_PROMPT, user_message, max_tokens=8000)
                 except (LLMUnavailableError, RuntimeError) as retry_exc:
                     logger.warning("FormAgent | retry also failed: %s", retry_exc)
                     return self._fallback_response()

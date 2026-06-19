@@ -25,7 +25,7 @@ import logging
 import re
 
 from agents.critic_agent import _rewrite
-from llm.client import LLMUnavailableError, call_llm
+from llm.client import LLMUnavailableError, call_llm, call_llm_race
 from schemas.decision_schema import AgentResponse, EvidenceItem
 from schemas.event_schema import EventType, IncomingEvent
 
@@ -100,7 +100,7 @@ class BenefitsAgent:
         user_message = self._build_user_message(event, evidence_items or [])
 
         try:
-            raw_text = call_llm(_SYSTEM_PROMPT, user_message, max_tokens=4096)
+            raw_text = call_llm_race(_SYSTEM_PROMPT, user_message, max_tokens=4096)
             cleaned_text, was_rewritten = _rewrite(raw_text)
             if was_rewritten:
                 logger.debug("BenefitsAgent | LLM output contained overclaims — rewrote")
