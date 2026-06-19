@@ -12,6 +12,7 @@ import com.elderbridge.guardianos.ui.screens.HomeScreen
 import com.elderbridge.guardianos.ui.screens.OnboardingScreen
 import com.elderbridge.guardianos.ui.screens.OverlayPreviewScreen
 import com.elderbridge.guardianos.ui.screens.PermissionsScreen
+import com.elderbridge.guardianos.ui.screens.ProfileScreen
 import com.elderbridge.guardianos.ui.theme.ElderBridgeGuardianosTheme
 
 class MainActivity : ComponentActivity() {
@@ -39,7 +40,8 @@ class MainActivity : ComponentActivity() {
                     composable("home") {
                         HomeScreen(
                             onTryDemo = { navController.navigate("overlay_preview") },
-                            onHistory = { navController.navigate("history") }
+                            onHistory = { navController.navigate("history") },
+                            onProfile = { navController.navigate("profile") }
                         )
                     }
                     composable("overlay_preview") {
@@ -47,6 +49,9 @@ class MainActivity : ComponentActivity() {
                     }
                     composable("history") {
                         HistoryScreen(onBack = { navController.popBackStack() })
+                    }
+                    composable("profile") {
+                        ProfileScreen(onBack = { navController.popBackStack() })
                     }
                 }
             }

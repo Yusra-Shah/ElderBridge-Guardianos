@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
@@ -20,10 +21,11 @@ import android.widget.EditText
 import android.widget.ScrollView
 import android.speech.tts.TextToSpeech
 import android.widget.TextView
+import com.elderbridge.guardianos.data.HistoryStore
+import com.elderbridge.guardianos.data.UserProfileStore
 import com.elderbridge.guardianos.network.ApiClient
 import com.elderbridge.guardianos.network.FinalDecision
 import com.elderbridge.guardianos.network.IncomingEvent
-import com.elderbridge.guardianos.data.HistoryStore
 import com.elderbridge.guardianos.redaction.ScreenContentHolder
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.CancellationException
@@ -46,6 +48,7 @@ class OverlayService : Service() {
     private var expandedCard: View? = null
     private var expandedCardParams: WindowManager.LayoutParams? = null
     private var isBubbleExpanded = false
+    private var wakeLock: PowerManager.WakeLock? = null
 
     // Coroutine scope tied to this service's lifetime; cancelled in onDestroy
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -81,6 +84,12 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "ElderBridge:AssistantLock"
+        )
+        wakeLock?.acquire(10 * 60 * 1000L) // 10 minutes max
         tts = TextToSpeech(this) { status ->
             ttsReady = (status == TextToSpeech.SUCCESS)
             if (ttsReady) tts?.language = Locale.getDefault()
@@ -93,6 +102,7 @@ class OverlayService : Service() {
     private fun addBubble() {
         val dp = resources.displayMetrics.density
         val bubblePx = (64 * dp).toInt()
+        val xBtnPx = (20 * dp).toInt()
 
         val params = WindowManager.LayoutParams(
             bubblePx,
@@ -121,15 +131,30 @@ class OverlayService : Service() {
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
+        // Small red circle in the top-right corner — tapping stops the service entirely
+        val xBtn = TextView(this).apply {
+            text = "✕"
+            textSize = 10f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            background = circleDrawable(Color.parseColor("#C62828"))
+        }
+        frame.addView(xBtn, FrameLayout.LayoutParams(xBtnPx, xBtnPx).apply {
+            gravity = Gravity.TOP or Gravity.END
+        })
+
         var initX = 0
         var initY = 0
         var touchX = 0f
         var touchY = 0f
         var dragged = false
+        var touchedX = false  // true when ACTION_DOWN lands on the X button
 
         frame.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
+                    // Detect whether touch started inside the X button area (top-right corner)
+                    touchedX = event.x >= (bubblePx - xBtnPx) && event.y <= xBtnPx
                     initX = params.x; initY = params.y
                     touchX = event.rawX; touchY = event.rawY
                     dragged = false
@@ -139,13 +164,18 @@ class OverlayService : Service() {
                     val dx = (event.rawX - touchX).toInt()
                     val dy = (event.rawY - touchY).toInt()
                     if (kotlin.math.abs(dx) > 8 || kotlin.math.abs(dy) > 8) dragged = true
-                    params.x = initX + dx
-                    params.y = initY + dy
-                    windowManager.updateViewLayout(frame, params)
+                    if (!touchedX) {
+                        params.x = initX + dx
+                        params.y = initY + dy
+                        windowManager.updateViewLayout(frame, params)
+                    }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!dragged) toggleExpanded()
+                    when {
+                        touchedX && !dragged -> stopSelf()
+                        !touchedX && !dragged -> toggleExpanded()
+                    }
                     true
                 }
                 else -> false
@@ -291,8 +321,14 @@ class OverlayService : Service() {
             setTextColor(Color.WHITE)
             background = roundedDrawable(Color.parseColor("#E65100"), 8 * dp)
             setOnClickListener {
+                val caregiverNumber = UserProfileStore.getCaregiverContact(this@OverlayService)
+                val smsUri = if (caregiverNumber.isNotBlank()) {
+                    Uri.parse("smsto:$caregiverNumber")
+                } else {
+                    Uri.parse("smsto:")  // no saved number — open contact picker
+                }
                 startActivity(
-                    Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:")).apply {
+                    Intent(Intent.ACTION_SENDTO, smsUri).apply {
                         putExtra("sms_body", "ElderBridge flagged a suspicious message on my phone. Please check on me.")
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK
                     }
@@ -633,7 +669,7 @@ class OverlayService : Service() {
         analyzeJob = serviceScope.launch {
             val dp = resources.displayMetrics.density
             val thinkingBubble = TextView(this@OverlayService).apply {
-                text = "Checking…"
+                text = CHAT_THINKING_MESSAGES[0]
                 textSize = 14f
                 setTextColor(Color.parseColor("#90CAF9"))
                 setPadding((12 * dp).toInt(), (8 * dp).toInt(), (12 * dp).toInt(), (8 * dp).toInt())
@@ -648,9 +684,19 @@ class OverlayService : Service() {
             chatMessagesContainer?.addView(thinkingBubble, thinkingLp)
             chatScrollView?.post { chatScrollView?.fullScroll(View.FOCUS_DOWN) }
 
+            // Rotate through friendly placeholder messages every 2 s while waiting
+            val thinkingRotateJob = launch {
+                var idx = 1
+                while (isActive) {
+                    delay(2_000)
+                    thinkingBubble.text = CHAT_THINKING_MESSAGES[idx % CHAT_THINKING_MESSAGES.size]
+                    idx++
+                }
+            }
+
             try {
                 val event = IncomingEvent(
-                    eventType = "NOTIFICATION",
+                    eventType = "FORM_SCREEN",
                     sourceApp = snapshot?.sourcePackage ?: "unknown",
                     redactedText = combined,
                     timestamp = java.time.Instant.now().toString(),
@@ -677,6 +723,8 @@ class OverlayService : Service() {
                     chatMessagesContainer?.removeView(thinkingBubble)
                     appendBubble("Error: ${e.message ?: "Request failed"}", isUser = false)
                 }
+            } finally {
+                thinkingRotateJob.cancel()
             }
         }
     }
@@ -703,6 +751,8 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (wakeLock?.isHeld == true) wakeLock?.release()
+        wakeLock = null
         serviceScope.cancel()       // cancels analyzeJob and all child coroutines
         stopBubblePulse()
         tts?.stop()
@@ -736,6 +786,12 @@ class OverlayService : Service() {
             "Checking official sources…",
             "Analysing your screen…",
             "Preparing your explanation…"
+        )
+
+        private val CHAT_THINKING_MESSAGES = listOf(
+            "Thinking about your question...",
+            "Looking into this for you...",
+            "One moment..."
         )
     }
 }

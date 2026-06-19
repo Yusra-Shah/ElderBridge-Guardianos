@@ -1,6 +1,7 @@
 package com.elderbridge.guardianos.ui.screens
 
 import android.content.Intent
+import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.foundation.background
@@ -41,7 +42,7 @@ import com.elderbridge.guardianos.ui.theme.ActiveGreen
 import com.elderbridge.guardianos.ui.theme.ActiveGreenLight
 
 @Composable
-fun HomeScreen(onTryDemo: () -> Unit, onHistory: () -> Unit) {
+fun HomeScreen(onTryDemo: () -> Unit, onHistory: () -> Unit, onProfile: () -> Unit) {
     val context = LocalContext.current
     var isMonitoringEnabled by remember { mutableStateOf(false) }
 
@@ -130,7 +131,12 @@ fun HomeScreen(onTryDemo: () -> Unit, onHistory: () -> Unit) {
                                             Toast.LENGTH_LONG
                                         ).show()
                                     } else {
-                                        context.startService(Intent(context, OverlayService::class.java))
+                                        val intent = Intent(context, OverlayService::class.java)
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                            context.startForegroundService(intent)
+                                        } else {
+                                            context.startService(intent)
+                                        }
                                         isMonitoringEnabled = true
                                     }
                                 }
@@ -175,6 +181,16 @@ fun HomeScreen(onTryDemo: () -> Unit, onHistory: () -> Unit) {
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Text(text = "View History", style = MaterialTheme.typography.labelLarge)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = onProfile,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text(text = "My Profile", style = MaterialTheme.typography.labelLarge)
             }
         }
     }
