@@ -8,7 +8,6 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.IBinder
-import android.os.PowerManager
 import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
@@ -48,7 +47,6 @@ class OverlayService : Service() {
     private var expandedCard: View? = null
     private var expandedCardParams: WindowManager.LayoutParams? = null
     private var isBubbleExpanded = false
-    private var wakeLock: PowerManager.WakeLock? = null
 
     // Coroutine scope tied to this service's lifetime; cancelled in onDestroy
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -84,17 +82,6 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        try {
-            val powerManager = getSystemService(POWER_SERVICE) as PowerManager
-            wakeLock = powerManager.newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK,
-                "ElderBridge:AssistantLock"
-            )
-            wakeLock?.acquire(10 * 60 * 1000L) // 10 minutes max
-        } catch (e: Exception) {
-            Log.w(TAG, "WakeLock acquisition failed: ${e.message}")
-            wakeLock = null
-        }
         tts = TextToSpeech(this) { status ->
             ttsReady = (status == TextToSpeech.SUCCESS)
             if (ttsReady) tts?.language = Locale.getDefault()
@@ -188,7 +175,11 @@ class OverlayService : Service() {
         }
 
         bubbleView = frame
-        windowManager.addView(frame, params)
+        try {
+            windowManager.addView(frame, params)
+        } catch (e: Exception) {
+            Log.e(TAG, "addView failed: ${e.message}")
+        }
         Log.d(TAG, "Overlay bubble added")
     }
 
@@ -200,6 +191,10 @@ class OverlayService : Service() {
     }
 
     private fun expandCard() {
+        if (expandedCard != null) {
+            try { windowManager.removeView(expandedCard) } catch (e: Exception) {}
+            expandedCard = null
+        }
         val dp = resources.displayMetrics.density
         val cardParams = WindowManager.LayoutParams(
             (300 * dp).toInt(),
@@ -473,7 +468,11 @@ class OverlayService : Service() {
         }
 
         expandedCard = card
-        windowManager.addView(card, cardParams)
+        try {
+            windowManager.addView(card, cardParams)
+        } catch (e: Exception) {
+            Log.e(TAG, "addView failed: ${e.message}")
+        }
         Log.d(TAG, "Overlay card expanded")
 
         val saved = savedResponse
@@ -760,12 +759,6 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        try {
-            if (wakeLock?.isHeld == true) wakeLock?.release()
-        } catch (e: Exception) {
-            Log.w(TAG, "WakeLock release failed: ${e.message}")
-        }
-        wakeLock = null
         serviceScope.cancel()       // cancels analyzeJob and all child coroutines
         stopBubblePulse()
         tts?.stop()
