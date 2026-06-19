@@ -37,4 +37,18 @@ object UserProfileStore {
     fun getCaregiverContact(context: Context): String =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString("caregiver_contact", "") ?: ""
+
+    fun getEmergencyContact(context: Context): String =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString("emergency_contact", "") ?: ""
+
+    fun setAssistantEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putBoolean("assistant_enabled", enabled)
+            .apply()
+    }
+
+    fun isAssistantEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean("assistant_enabled", false)
 }

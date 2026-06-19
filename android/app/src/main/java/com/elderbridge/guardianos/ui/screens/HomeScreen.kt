@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.elderbridge.guardianos.data.UserProfileStore
 import com.elderbridge.guardianos.services.OverlayService
 import com.elderbridge.guardianos.services.ScreenReaderService
 import com.elderbridge.guardianos.ui.theme.ActiveGreen
@@ -44,7 +45,7 @@ import com.elderbridge.guardianos.ui.theme.ActiveGreenLight
 @Composable
 fun HomeScreen(onTryDemo: () -> Unit, onHistory: () -> Unit, onProfile: () -> Unit) {
     val context = LocalContext.current
-    var isMonitoringEnabled by remember { mutableStateOf(false) }
+    var isMonitoringEnabled by remember { mutableStateOf(UserProfileStore.isAssistantEnabled(context)) }
 
     Column(
         modifier = Modifier
@@ -137,11 +138,13 @@ fun HomeScreen(onTryDemo: () -> Unit, onHistory: () -> Unit, onProfile: () -> Un
                                         } else {
                                             context.startService(intent)
                                         }
+                                        UserProfileStore.setAssistantEnabled(context, true)
                                         isMonitoringEnabled = true
                                     }
                                 }
                             } else {
                                 context.stopService(Intent(context, OverlayService::class.java))
+                                UserProfileStore.setAssistantEnabled(context, false)
                                 isMonitoringEnabled = false
                             }
                         },

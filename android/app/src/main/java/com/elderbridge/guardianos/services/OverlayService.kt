@@ -2,14 +2,20 @@ package com.elderbridge.guardianos.services
 
 import android.Manifest
 import android.animation.ObjectAnimator
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Service
+import android.os.Build
+import androidx.core.app.NotificationCompat
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import android.widget.Toast
 import android.view.Gravity
@@ -93,6 +99,31 @@ class OverlayService : Service() {
         addBubble()
     }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startAsForeground()
+        return START_STICKY
+    }
+
+    private fun startAsForeground() {
+        val channelId = "elderbridge_overlay"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                channelId,
+                "ElderBridge Assistant",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
+        val notification = NotificationCompat.Builder(this, channelId)
+            .setContentTitle("ElderBridge is active")
+            .setContentText("Helping you stay safe")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+        startForeground(1, notification)
+    }
+
     // ── Bubble ────────────────────────────────────────────────────────────────
 
     private fun addBubble() {
@@ -138,7 +169,10 @@ class OverlayService : Service() {
             background = circleDrawable(Color.parseColor("#C62828"))
             isFocusable = false
             isClickable = true
-            setOnClickListener { stopSelf() }
+            setOnClickListener {
+                UserProfileStore.setAssistantEnabled(this@OverlayService, false)
+                stopSelf()
+            }
         }
         frame.addView(xBtn, FrameLayout.LayoutParams(xBtnPx, xBtnPx).apply {
             gravity = Gravity.TOP or Gravity.END
@@ -266,11 +300,11 @@ class OverlayService : Service() {
     }
 
     private fun doAlertFamily() {
-        val caregiverNumber = UserProfileStore.getCaregiverContact(this)
-        if (caregiverNumber.isBlank()) {
-            Toast.makeText(this, "Please save a caregiver number in My Profile first", Toast.LENGTH_LONG).show()
+        val number = UserProfileStore.getEmergencyContact(this)
+        if (number.isBlank()) {
+            Toast.makeText(this, "Save an emergency contact number in My Profile first", Toast.LENGTH_LONG).show()
         } else {
-            val callUri = Uri.parse("tel:$caregiverNumber")
+            val callUri = Uri.parse("tel:$number")
             val hasPermission = checkSelfPermission(Manifest.permission.CALL_PHONE) ==
                     PackageManager.PERMISSION_GRANTED
             startActivity(
@@ -650,7 +684,9 @@ class OverlayService : Service() {
                 Log.d(TAG, "analyzeEvent raw response: ${com.google.gson.Gson().toJson(decision)}")
 
                 if (isActive) {
-                    showResponse(decision)
+                    Handler(Looper.getMainLooper()).post {
+                        showResponse(decision)
+                    }
                     HistoryStore.addEntry(
                         screenText = snapshot.redactedText,
                         response = decision.responseText,
@@ -662,7 +698,7 @@ class OverlayService : Service() {
                 throw e // always rethrow so coroutine framework cancels cleanly
             } catch (e: Exception) {
                 Log.w(TAG, "analyzeEvent failed (${e.javaClass.simpleName}): ${e.message}")
-                if (isActive) showError(e)
+                if (isActive) Handler(Looper.getMainLooper()).post { showError(e) }
             } finally {
                 rotationJob.cancel()
                 stopBubblePulse()
@@ -793,8 +829,10 @@ class OverlayService : Service() {
                 }
                 Log.d(TAG, "sendQuestion response: ${com.google.gson.Gson().toJson(decision)}")
                 if (isActive) {
-                    chatMessagesContainer?.removeView(thinkingBubble)
-                    appendBubble(decision.responseText, isUser = false)
+                    Handler(Looper.getMainLooper()).post {
+                        chatMessagesContainer?.removeView(thinkingBubble)
+                        appendBubble(decision.responseText, isUser = false)
+                    }
                     HistoryStore.addEntry(
                         screenText = combined,
                         response = decision.responseText,
@@ -806,8 +844,10 @@ class OverlayService : Service() {
             } catch (e: Exception) {
                 Log.w(TAG, "sendQuestion failed (${e.javaClass.simpleName}): ${e.message}")
                 if (isActive) {
-                    chatMessagesContainer?.removeView(thinkingBubble)
-                    appendBubble("Error: ${e.message ?: "Request failed"}", isUser = false)
+                    Handler(Looper.getMainLooper()).post {
+                        chatMessagesContainer?.removeView(thinkingBubble)
+                        appendBubble("Error: ${e.message ?: "Request failed"}", isUser = false)
+                    }
                 }
             } finally {
                 thinkingRotateJob.cancel()
