@@ -58,6 +58,13 @@ class OverlayService : Service() {
     private var actionRow: LinearLayout? = null
     private var readAloudBtn: Button? = null
 
+    private data class SavedResponse(
+        val headerText: String,
+        val bodyText: String,
+        val riskFlag: String
+    )
+    private var savedResponse: SavedResponse? = null
+
     // Chat mode state
     private var chatArea: LinearLayout? = null
     private var chatScrollView: ScrollView? = null
@@ -428,7 +435,17 @@ class OverlayService : Service() {
         windowManager.addView(card, cardParams)
         Log.d(TAG, "Overlay card expanded")
 
-        if (hasEnoughContent) {
+        val saved = savedResponse
+        if (saved != null) {
+            savedResponse = null
+            currentAiResponse = saved.bodyText
+            cardHeaderView?.text = saved.headerText
+            cardBodyView?.text = saved.bodyText
+            readAloudBtn?.setOnClickListener {
+                if (ttsReady) tts?.speak(saved.bodyText, TextToSpeech.QUEUE_FLUSH, null, "eb_tts")
+            }
+            actionRow?.visibility = View.VISIBLE
+        } else if (hasEnoughContent) {
             startAnalysis(snapshot!!)
         }
     }
@@ -437,6 +454,7 @@ class OverlayService : Service() {
         // Cancel any in-flight API call so a late response can't touch removed views
         analyzeJob?.cancel()
         analyzeJob = null
+        savedResponse = null
         stopBubblePulse()
         tts?.stop()
         isChatMode = false
@@ -534,6 +552,11 @@ class OverlayService : Service() {
 
     private fun showResponse(decision: FinalDecision) {
         currentAiResponse = decision.responseText
+        savedResponse = SavedResponse(
+            headerText = "ElderBridge says:",
+            bodyText = decision.responseText,
+            riskFlag = decision.riskFlag ?: "none"
+        )
         cardHeaderView?.text = "ElderBridge says:"
         cardBodyView?.text = decision.responseText
         readAloudBtn?.setOnClickListener {
