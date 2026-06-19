@@ -1,6 +1,6 @@
 package com.elderbridge.guardianos.services
 
-import android.app.AlertDialog
+import android.animation.ObjectAnimator
 import android.app.Service
 import android.content.Intent
 import android.net.Uri
@@ -41,7 +41,10 @@ class OverlayService : Service() {
 
     private lateinit var windowManager: WindowManager
     private var bubbleView: View? = null
+    private var bubbleLabel: TextView? = null
+    private var bubblePulseAnim: ObjectAnimator? = null
     private var expandedCard: View? = null
+    private var expandedCardParams: WindowManager.LayoutParams? = null
     private var isBubbleExpanded = false
 
     // Coroutine scope tied to this service's lifetime; cancelled in onDestroy
@@ -51,8 +54,17 @@ class OverlayService : Service() {
     // Kept so the API response can update in-place without rebuilding the card
     private var cardHeaderView: TextView? = null
     private var cardBodyView: TextView? = null
+    private var cardBodyScroll: ScrollView? = null
     private var actionRow: LinearLayout? = null
     private var readAloudBtn: Button? = null
+
+    // Chat mode state
+    private var chatArea: LinearLayout? = null
+    private var chatScrollView: ScrollView? = null
+    private var chatMessagesContainer: LinearLayout? = null
+    private var chatEditText: EditText? = null
+    private var isChatMode = false
+    private var currentAiResponse: String = ""
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
@@ -96,6 +108,7 @@ class OverlayService : Service() {
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
         }
+        bubbleLabel = label
         frame.addView(label, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
@@ -157,6 +170,7 @@ class OverlayService : Service() {
             x = (16 * dp).toInt()
             y = (280 * dp).toInt()
         }
+        expandedCardParams = cardParams
 
         val pad = (20 * dp).toInt()
         val card = LinearLayout(this).apply {
@@ -169,7 +183,9 @@ class OverlayService : Service() {
         val hasContent = snapshot != null && snapshot.redactedText.isNotBlank()
         val hasEnoughContent = snapshot != null && snapshot.redactedText.length >= 50
 
-        // Header label — updated in-place by showResponse / showError
+        // Header row: status label on the left, minimize ▼ on the right
+        val headerRow = FrameLayout(this)
+
         val headerTv = TextView(this).apply {
             text = when {
                 hasEnoughContent -> THINKING_MESSAGES[0]
@@ -181,6 +197,24 @@ class OverlayService : Service() {
             setPadding(0, 0, 0, (10 * dp).toInt())
         }
         cardHeaderView = headerTv
+
+        val minimizeBtn = TextView(this).apply {
+            text = "▼"
+            textSize = 14f
+            setTextColor(Color.parseColor("#5E92F3"))
+            setPadding(0, 0, 0, (10 * dp).toInt())
+            setOnClickListener { minimizeCard() }
+        }
+
+        headerRow.addView(headerTv, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
+
+        headerRow.addView(minimizeBtn, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL })
 
         // Body — updated in-place when the API responds
         val bodyTv = TextView(this).apply {
@@ -207,7 +241,9 @@ class OverlayService : Service() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ))
         }
+        cardBodyScroll = bodyScroll
 
+        // Action buttons
         val readAloudBtnView = Button(this).apply {
             text = "Read Aloud"
             textSize = 11f
@@ -223,7 +259,7 @@ class OverlayService : Service() {
             isAllCaps = false
             setTextColor(Color.WHITE)
             background = roundedDrawable(Color.parseColor("#1565C0"), 8 * dp)
-            setOnClickListener { showAskDialog() }
+            setOnClickListener { enterChatMode() }
         }
 
         val emergencyBtnView = Button(this).apply {
@@ -241,9 +277,25 @@ class OverlayService : Service() {
             }
         }
 
+        val alertFamilyBtnView = Button(this).apply {
+            text = "Alert Family"
+            textSize = 11f
+            isAllCaps = false
+            setTextColor(Color.WHITE)
+            background = roundedDrawable(Color.parseColor("#E65100"), 8 * dp)
+            setOnClickListener {
+                startActivity(
+                    Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:")).apply {
+                        putExtra("sms_body", "ElderBridge flagged a suspicious message on my phone. Please check on me.")
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                )
+            }
+        }
+
         val actionRowView = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            weightSum = 3f
+            weightSum = 4f
             visibility = View.GONE
         }
         val gap = (4 * dp).toInt()
@@ -254,8 +306,81 @@ class OverlayService : Service() {
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                 .apply { marginEnd = gap })
         actionRowView.addView(emergencyBtnView,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { marginEnd = gap })
+        actionRowView.addView(alertFamilyBtnView,
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         actionRow = actionRowView
+
+        // Chat area (hidden until "Ask a Question" is tapped)
+        val chatMsgsContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, (8 * dp).toInt(), 0, (8 * dp).toInt())
+        }
+        chatMessagesContainer = chatMsgsContainer
+
+        val maxChatHeightPx = (300 * dp).toInt()
+        val chatScroll = object : ScrollView(this) {
+            override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                super.onMeasure(
+                    widthMeasureSpec,
+                    View.MeasureSpec.makeMeasureSpec(maxChatHeightPx, View.MeasureSpec.AT_MOST)
+                )
+            }
+        }.apply {
+            addView(chatMsgsContainer, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
+        chatScrollView = chatScroll
+
+        val chatInput = EditText(this).apply {
+            hint = "Type your question…"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.parseColor("#90CAF9"))
+            background = roundedDrawable(Color.parseColor("#1A4A8A"), 8 * dp)
+            setPadding((12 * dp).toInt(), (8 * dp).toInt(), (12 * dp).toInt(), (8 * dp).toInt())
+        }
+        chatEditText = chatInput
+
+        val sendBtn = Button(this).apply {
+            text = "Send"
+            textSize = 12f
+            isAllCaps = false
+            setTextColor(Color.WHITE)
+            background = roundedDrawable(Color.parseColor("#1565C0"), 8 * dp)
+            setOnClickListener {
+                val q = chatInput.text.toString().trim()
+                if (q.isNotEmpty()) {
+                    chatInput.setText("")
+                    appendBubble(q, isUser = true)
+                    sendQuestion(q)
+                }
+            }
+        }
+
+        val chatInputRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, (8 * dp).toInt(), 0, 0)
+            weightSum = 1f
+        }
+        chatInputRow.addView(chatInput,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 0.75f)
+                .apply { marginEnd = gap })
+        chatInputRow.addView(sendBtn,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 0.25f))
+
+        val chatAreaView = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        chatAreaView.addView(chatScroll, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        chatAreaView.addView(chatInputRow, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        chatArea = chatAreaView
 
         val closeBtn = Button(this).apply {
             text = "Close"
@@ -264,8 +389,15 @@ class OverlayService : Service() {
             setOnClickListener { collapseCard(); isBubbleExpanded = false }
         }
 
-        card.addView(headerTv)
+        card.addView(headerRow, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
         card.addView(bodyScroll)
+        card.addView(chatAreaView, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
         card.addView(actionRowView, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
@@ -305,14 +437,45 @@ class OverlayService : Service() {
         // Cancel any in-flight API call so a late response can't touch removed views
         analyzeJob?.cancel()
         analyzeJob = null
+        stopBubblePulse()
         tts?.stop()
+        isChatMode = false
+        currentAiResponse = ""
         cardHeaderView = null
         cardBodyView = null
+        cardBodyScroll = null
         actionRow = null
         readAloudBtn = null
+        chatArea = null
+        chatScrollView = null
+        chatMessagesContainer = null
+        chatEditText = null
         expandedCard?.let { windowManager.removeView(it) }
         expandedCard = null
+        expandedCardParams = null
         Log.d(TAG, "Overlay card collapsed")
+    }
+
+    // Hides the card but lets any in-flight analysis complete and save to history.
+    // The bubble continues pulsing while the job is active.
+    private fun minimizeCard() {
+        tts?.stop()
+        isChatMode = false
+        currentAiResponse = ""
+        cardHeaderView = null
+        cardBodyView = null
+        cardBodyScroll = null
+        actionRow = null
+        readAloudBtn = null
+        chatArea = null
+        chatScrollView = null
+        chatMessagesContainer = null
+        chatEditText = null
+        expandedCard?.let { windowManager.removeView(it) }
+        expandedCard = null
+        expandedCardParams = null
+        isBubbleExpanded = false
+        Log.d(TAG, "Overlay card minimized")
     }
 
     // ── API call ──────────────────────────────────────────────────────────────
@@ -320,6 +483,7 @@ class OverlayService : Service() {
     private fun startAnalysis(snapshot: ScreenContentHolder.ScreenSnapshot) {
         analyzeJob?.cancel()
         analyzeJob = serviceScope.launch {
+            startBubblePulse()
             val rotationJob = launch {
                 var i = 0
                 while (isActive) {
@@ -361,6 +525,7 @@ class OverlayService : Service() {
                 if (isActive) showError(e)
             } finally {
                 rotationJob.cancel()
+                stopBubblePulse()
             }
         }
     }
@@ -368,6 +533,7 @@ class OverlayService : Service() {
     // Both run on Dispatchers.Main (the scope default), so direct View mutation is safe
 
     private fun showResponse(decision: FinalDecision) {
+        currentAiResponse = decision.responseText
         cardHeaderView?.text = "ElderBridge says:"
         cardBodyView?.text = decision.responseText
         readAloudBtn?.setOnClickListener {
@@ -381,24 +547,59 @@ class OverlayService : Service() {
         cardBodyView?.text = e.message ?: "Request failed"
     }
 
-    private fun showAskDialog() {
-        val dp = resources.displayMetrics.density
-        val editText = EditText(this).apply {
-            hint = "Type your question…"
-            setPadding((16 * dp).toInt(), (12 * dp).toInt(), (16 * dp).toInt(), (12 * dp).toInt())
+    // ── Chat mode ─────────────────────────────────────────────────────────────
+
+    private fun enterChatMode() {
+        isChatMode = true
+        cardBodyScroll?.visibility = View.GONE
+        actionRow?.visibility = View.GONE
+        chatArea?.visibility = View.VISIBLE
+
+        // Allow the soft keyboard to focus the EditText
+        expandedCard?.let { card ->
+            val params = expandedCardParams ?: return@let
+            params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+            windowManager.updateViewLayout(card, params)
         }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Ask a Question")
-            .setView(editText)
-            .setPositiveButton("Send") { _, _ ->
-                val q = editText.text.toString().trim()
-                if (q.isNotEmpty()) sendQuestion(q)
-            }
-            .setNegativeButton("Cancel", null)
-            .create()
-        @Suppress("DEPRECATION")
-        dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
-        dialog.show()
+
+        chatMessagesContainer?.removeAllViews()
+        if (currentAiResponse.isNotEmpty()) {
+            appendBubble(currentAiResponse, isUser = false)
+        }
+
+        chatEditText?.requestFocus()
+        cardHeaderView?.text = "Chat with ElderBridge"
+    }
+
+    private fun appendBubble(text: String, isUser: Boolean) {
+        val dp = resources.displayMetrics.density
+        val container = chatMessagesContainer ?: return
+
+        val bubble = TextView(this).apply {
+            this.text = text
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            background = roundedDrawable(
+                if (isUser) Color.parseColor("#37474F") else Color.parseColor("#1565C0"),
+                10 * dp
+            )
+            val hPad = (12 * dp).toInt()
+            val vPad = (8 * dp).toInt()
+            setPadding(hPad, vPad, hPad, vPad)
+        }
+
+        val lp = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            bottomMargin = (6 * dp).toInt()
+            gravity = if (isUser) Gravity.END else Gravity.START
+            if (isUser) marginStart = (40 * dp).toInt()
+            else marginEnd = (40 * dp).toInt()
+        }
+
+        container.addView(bubble, lp)
+        chatScrollView?.post { chatScrollView?.fullScroll(View.FOCUS_DOWN) }
     }
 
     private fun sendQuestion(question: String) {
@@ -407,8 +608,23 @@ class OverlayService : Service() {
         val combined = if (screenText.isNotBlank()) "$screenText\n\nUser question: $question" else question
         analyzeJob?.cancel()
         analyzeJob = serviceScope.launch {
-            cardHeaderView?.text = "Checking…"
-            cardBodyView?.text = ""
+            val dp = resources.displayMetrics.density
+            val thinkingBubble = TextView(this@OverlayService).apply {
+                text = "Checking…"
+                textSize = 14f
+                setTextColor(Color.parseColor("#90CAF9"))
+                setPadding((12 * dp).toInt(), (8 * dp).toInt(), (12 * dp).toInt(), (8 * dp).toInt())
+            }
+            val thinkingLp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = (6 * dp).toInt()
+                gravity = Gravity.START
+            }
+            chatMessagesContainer?.addView(thinkingBubble, thinkingLp)
+            chatScrollView?.post { chatScrollView?.fullScroll(View.FOCUS_DOWN) }
+
             try {
                 val event = IncomingEvent(
                     eventType = "NOTIFICATION",
@@ -422,7 +638,8 @@ class OverlayService : Service() {
                 }
                 Log.d(TAG, "sendQuestion response: ${com.google.gson.Gson().toJson(decision)}")
                 if (isActive) {
-                    showResponse(decision)
+                    chatMessagesContainer?.removeView(thinkingBubble)
+                    appendBubble(decision.responseText, isUser = false)
                     HistoryStore.addEntry(
                         screenText = combined,
                         response = decision.responseText,
@@ -433,9 +650,30 @@ class OverlayService : Service() {
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "sendQuestion failed (${e.javaClass.simpleName}): ${e.message}")
-                if (isActive) showError(e)
+                if (isActive) {
+                    chatMessagesContainer?.removeView(thinkingBubble)
+                    appendBubble("Error: ${e.message ?: "Request failed"}", isUser = false)
+                }
             }
         }
+    }
+
+    // ── Bubble pulse animation ─────────────────────────────────────────────────
+
+    private fun startBubblePulse() {
+        val label = bubbleLabel ?: return
+        bubblePulseAnim?.cancel()
+        bubblePulseAnim = ObjectAnimator.ofFloat(label, "alpha", 1f, 0.3f, 1f).apply {
+            duration = 1200
+            repeatCount = ObjectAnimator.INFINITE
+            start()
+        }
+    }
+
+    private fun stopBubblePulse() {
+        bubblePulseAnim?.cancel()
+        bubblePulseAnim = null
+        bubbleLabel?.alpha = 1f
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -443,6 +681,7 @@ class OverlayService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         serviceScope.cancel()       // cancels analyzeJob and all child coroutines
+        stopBubblePulse()
         tts?.stop()
         tts?.shutdown()
         tts = null

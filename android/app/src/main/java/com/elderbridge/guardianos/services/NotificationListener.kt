@@ -11,7 +11,7 @@ class NotificationListener : NotificationListenerService() {
         val packageName = sbn.packageName
         val extras = sbn.notification?.extras ?: return
 
-        val title = extras.getString("android.title").orEmpty()
+        val title = extras.getCharSequence("android.title")?.toString().orEmpty()
         val text = extras.getCharSequence("android.text")?.toString().orEmpty()
 
         // Redact on-device before any logging — OTPs and phone numbers must never appear in logs
