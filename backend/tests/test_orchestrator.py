@@ -80,16 +80,19 @@ class TestGuardrailBlocksScamSms:
             f"Expected STOP_AND_VERIFY, got {decision.risk_flag}"
         )
 
-    def test_response_text_is_safe_replacement(self):
-        """When the guardrail blocks, the safe replacement text must be used."""
+    def test_response_text_is_non_empty_and_safe(self):
+        """When a scam is detected, the response must be non-empty and not instructional."""
         event = _make_event(
             EventType.SMS,
             redacted_text="Enter your OTP immediately to avoid account suspension.",
         )
         decision = run_pipeline(event)
-        # Safe replacement language from guardrail — no "placeholder" language
-        assert "placeholder" not in decision.response_text.lower()
-        assert "do not share" in decision.response_text.lower()
+        assert decision.risk_flag == RiskLevel.STOP_AND_VERIFY
+        assert len(decision.response_text) > 0
+        # Response must never instruct the user to share sensitive info
+        text = decision.response_text.lower()
+        assert "enter your otp" not in text
+        assert "share your otp" not in text
 
     def test_next_steps_are_non_empty_on_block(self):
         event = _make_event(

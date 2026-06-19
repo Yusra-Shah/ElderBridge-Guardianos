@@ -46,6 +46,18 @@ _SCAM_ESCALATION_SIGNALS = [
     "otp", "[redacted_otp]", "password", "cnic", "[redacted_cnic]",
     "transfer", "send money", "urgent", "immediately", "expire",
     "suspended", "blocked", "arrest", "threat",
+    # Prize/lottery scams
+    "won", "prize", "lucky draw", "lottery", "congratulations",
+    # Telecom scams
+    "recharge", "sim block", "network upgrade", "verify sim",
+    # Job scams
+    "job offer", "earn from home", "part time", "online work",
+    # Delivery scams
+    "parcel", "package", "courier", "customs", "held",
+    # Bank scams
+    "account block", "kyc update", "verify account", "atm blocked",
+    # Romanized Urdu scam patterns
+    "mubarak", "inaam", "inam", "khata",
 ]
 
 
@@ -54,11 +66,14 @@ class RouterAgent:
 
     NAME = "RouterAgent"
 
-    # Base specialist agents by event type (critic + guardrail added by orchestrator)
+    # Base specialist agents by event type (critic + guardrail added by orchestrator).
+    # FORM_SCREEN routes to FormAgent only; BenefitsAgent is added by secondary routing
+    # when benefit-related keywords (pension, healthcare, grant, etc.) are detected.
+    # This prevents the benefits agent from treating plain CNIC/income fields as scams.
     _BASE_ROUTING: dict[EventType, List[str]] = {
         EventType.SMS: ["ResearchAgent"],
         EventType.NOTIFICATION: ["ResearchAgent"],
-        EventType.FORM_SCREEN: ["FormAgent", "BenefitsAgent"],
+        EventType.FORM_SCREEN: ["FormAgent"],
         EventType.DOCUMENT: ["FormAgent", "BenefitsAgent", "ResearchAgent"],
     }
 

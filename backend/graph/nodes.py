@@ -107,9 +107,16 @@ def node_form(state: PipelineState) -> PipelineState:
 
     Appends to: agent_responses.
     Reads: event.
+
+    FormAgent now calls the LLM for FORM_SCREEN events to explain each
+    visible field in plain language.  Falls back to a rule-based stub on
+    LLMUnavailableError (used_fallback=True on the response).
     """
     resp = _form.run(state["event"])
-    logger.debug("node_form | confidence=%.2f", resp.confidence)
+    if resp.used_fallback:
+        logger.warning("node_form | LLM unavailable — rule-based fallback used")
+    else:
+        logger.debug("node_form | confidence=%.2f", resp.confidence)
     return {
         **state,
         "agent_responses": [*state.get("agent_responses", []), resp],
@@ -151,13 +158,9 @@ def node_critic(state: PipelineState) -> PipelineState:
     Run the Critic / Judge Agent over all specialist responses accumulated so far.
 
     Sets: last_critic_response (for introspection / testing / logging).
+    Also sets: draft_response — overrides the baseline text with the best
+    specialist LLM output when one is available (non-fallback, non-empty).
     Reads: event, agent_responses.
-
-    The critic's cleaned output is stored in last_critic_response.output_text.
-    In this milestone the baseline draft_response is still used as the final
-    user-facing text (specialists return stubs); when specialists produce real
-    LLM output in a later milestone, this node will update draft_response from
-    the critic's cleaned combined text.
     """
     event = state["event"]
     responses = state.get("agent_responses", [])
@@ -169,6 +172,23 @@ def node_critic(state: PipelineState) -> PipelineState:
         critic_resp.requires_human_review,
         critic_resp.confidence,
     )
+
+    # Only BenefitsAgent and FormAgent produce user-facing LLM text.
+    # ResearchAgent and others provide supporting evidence, not draft responses.
+    _USER_FACING_AGENTS = {"BenefitsAgent", "FormAgent"}
+    non_fallback = [
+        r for r in responses
+        if not r.used_fallback and r.output_text and r.agent_name in _USER_FACING_AGENTS
+    ]
+    if non_fallback:
+        best = max(non_fallback, key=lambda r: r.confidence)
+        logger.debug(
+            "node_critic | promoting %s output to draft_response (confidence=%.2f)",
+            best.agent_name,
+            best.confidence,
+        )
+        return {**state, "last_critic_response": critic_resp, "draft_response": best.output_text}
+
     return {**state, "last_critic_response": critic_resp}
 
 
@@ -179,28 +199,50 @@ def node_guardrail(state: PipelineState) -> PipelineState:
     Sets: final_decision.
     Reads: event, draft_response, risk_flag, next_steps, evidence_items.
 
-    If the guardrail BLOCKS:
-      final_decision uses the safe replacement text and STOP_AND_VERIFY.
-    If the guardrail PASSES:
-      final_decision uses the baseline draft_response and risk_flag.
+    Three outcomes, determined by GuardrailAgent.run() return value:
+
+      HARD BLOCK (output_text non-empty, requires_human_review=True):
+        AI draft output itself contains a dangerous pattern.
+        Uses the guardrail safe-replacement text as response_text.
+        Sets STOP_AND_VERIFY and clears source_citations.
+
+      SCAM FLAG (output_text empty, requires_human_review=True):
+        Scam signal detected in incoming event text.
+        Passes the baseline draft_response through unchanged.
+        Sets STOP_AND_VERIFY and clears source_citations.
+
+      PASS (requires_human_review=False):
+        No violations. Uses baseline draft_response with the existing
+        risk_flag and next_steps computed by node_baseline.
     """
     event = state["event"]
     draft = state.get("draft_response", "")
 
     guardrail_resp = _guardrail.run(event, draft)
-    logger.debug(
-        "node_guardrail | result=%s",
-        "BLOCKED" if guardrail_resp.requires_human_review else "PASS",
-    )
 
-    if guardrail_resp.requires_human_review:
+    if guardrail_resp.output_text:
+        # HARD BLOCK — AI output is directly dangerous; replace with safe text.
+        logger.debug("node_guardrail | result=HARD_BLOCK")
         decision = FinalDecision(
             response_text=guardrail_resp.output_text,
             risk_flag=RiskLevel.STOP_AND_VERIFY,
             next_steps=_guardrail.safe_next_steps,
             source_citations=[],
         )
+
+    elif guardrail_resp.requires_human_review:
+        # SCAM FLAG — dangerous input; use baseline draft, override risk.
+        logger.debug("node_guardrail | result=SCAM_FLAG")
+        decision = FinalDecision(
+            response_text=draft,
+            risk_flag=RiskLevel.STOP_AND_VERIFY,
+            next_steps=_guardrail.safe_next_steps,
+            source_citations=[],
+        )
+
     else:
+        # PASS — no violations; use baseline draft with existing risk metadata.
+        logger.debug("node_guardrail | result=PASS")
         decision = FinalDecision(
             response_text=draft,
             risk_flag=state.get("risk_flag", RiskLevel.SOFT_HELP),

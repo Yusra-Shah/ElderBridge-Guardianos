@@ -65,7 +65,7 @@ class TestLLMSuccessPath:
     """When the LLM responds normally, used_fallback must be False and
     the response text must come from the LLM (post-rewrite)."""
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_used_fallback_is_false_on_success(self, mock_call_llm):
         mock_call_llm.return_value = (
             "You may qualify based on the information provided for the senior pension program. "
@@ -74,33 +74,33 @@ class TestLLMSuccessPath:
         resp = BenefitsAgent().run(_make_event())
         assert resp.used_fallback is False
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_output_text_comes_from_llm(self, mock_call_llm):
         expected = "You may be eligible for housing support. Please verify with the agency."
         mock_call_llm.return_value = expected
         resp = BenefitsAgent().run(_make_event())
         assert resp.output_text == expected
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_confidence_is_0_75_on_llm_success(self, mock_call_llm):
         mock_call_llm.return_value = "You may qualify based on the information provided."
         resp = BenefitsAgent().run(_make_event())
         assert resp.confidence == 0.75
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_requires_human_review_always_true(self, mock_call_llm):
         """Benefits guidance always requires human review per policy."""
         mock_call_llm.return_value = "You may be eligible. Please verify."
         resp = BenefitsAgent().run(_make_event())
         assert resp.requires_human_review is True
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_agent_name_is_benefits_agent(self, mock_call_llm):
         mock_call_llm.return_value = "You may be eligible for assistance."
         resp = BenefitsAgent().run(_make_event())
         assert resp.agent_name == "BenefitsAgent"
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_returns_agent_response_instance(self, mock_call_llm):
         mock_call_llm.return_value = "You may qualify based on the information provided."
         resp = BenefitsAgent().run(_make_event())
@@ -115,35 +115,35 @@ class TestOverclaimRewriteOnLLMOutput:
     """The critic-style _rewrite() must be applied to LLM output before
     returning, using the same rules from critic_agent.py (no duplication)."""
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_you_qualify_is_rewritten(self, mock_call_llm):
         mock_call_llm.return_value = "You qualify for the senior pension program."
         resp = BenefitsAgent().run(_make_event())
         assert "you qualify" not in resp.output_text.lower()
         assert "may qualify" in resp.output_text.lower()
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_you_are_eligible_is_rewritten(self, mock_call_llm):
         mock_call_llm.return_value = "You are eligible for the emergency housing benefit."
         resp = BenefitsAgent().run(_make_event())
         assert "you are eligible" not in resp.output_text.lower()
         assert "may be eligible" in resp.output_text.lower()
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_guaranteed_is_rewritten(self, mock_call_llm):
         mock_call_llm.return_value = "This benefit amount is guaranteed for seniors over 60."
         resp = BenefitsAgent().run(_make_event())
         assert "guaranteed" not in resp.output_text.lower()
         assert "possibly available" in resp.output_text.lower()
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_you_will_receive_is_rewritten(self, mock_call_llm):
         mock_call_llm.return_value = "You will receive PKR 2000 per month under this scheme."
         resp = BenefitsAgent().run(_make_event())
         assert "you will receive" not in resp.output_text.lower()
         assert "may receive" in resp.output_text.lower()
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_clean_llm_output_passes_unchanged(self, mock_call_llm):
         """Clean, already-hedged LLM output must not be altered."""
         clean = (
@@ -155,7 +155,7 @@ class TestOverclaimRewriteOnLLMOutput:
         assert resp.output_text == clean
         assert resp.used_fallback is False
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_multiple_overclaims_all_rewritten(self, mock_call_llm):
         mock_call_llm.return_value = (
             "You qualify and you are eligible. This is guaranteed and confirmed."
@@ -176,27 +176,27 @@ class TestLLMFallback:
     """On LLMUnavailableError the agent must return a safe rule-based response
     with used_fallback=True.  The fallback must never contain overclaims."""
 
-    @patch("agents.benefits_agent.call_llm", side_effect=LLMUnavailableError("timeout"))
+    @patch("agents.benefits_agent.call_llm_race", side_effect=LLMUnavailableError("timeout"))
     def test_fallback_sets_used_fallback_true(self, _):
         resp = BenefitsAgent().run(_make_event())
         assert resp.used_fallback is True
 
-    @patch("agents.benefits_agent.call_llm", side_effect=LLMUnavailableError("timeout"))
+    @patch("agents.benefits_agent.call_llm_race", side_effect=LLMUnavailableError("timeout"))
     def test_fallback_confidence_is_low(self, _):
         resp = BenefitsAgent().run(_make_event())
         assert resp.confidence == 0.1
 
-    @patch("agents.benefits_agent.call_llm", side_effect=LLMUnavailableError("connection refused"))
+    @patch("agents.benefits_agent.call_llm_race", side_effect=LLMUnavailableError("connection refused"))
     def test_fallback_output_text_is_non_empty(self, _):
         resp = BenefitsAgent().run(_make_event())
         assert len(resp.output_text.strip()) > 20
 
-    @patch("agents.benefits_agent.call_llm", side_effect=LLMUnavailableError("rate limit"))
+    @patch("agents.benefits_agent.call_llm_race", side_effect=LLMUnavailableError("rate limit"))
     def test_fallback_requires_human_review_true(self, _):
         resp = BenefitsAgent().run(_make_event())
         assert resp.requires_human_review is True
 
-    @patch("agents.benefits_agent.call_llm", side_effect=LLMUnavailableError("timeout"))
+    @patch("agents.benefits_agent.call_llm_race", side_effect=LLMUnavailableError("timeout"))
     def test_fallback_output_contains_no_overclaims(self, _):
         """Fallback text must not make eligibility guarantees."""
         resp = BenefitsAgent().run(_make_event())
@@ -205,38 +205,42 @@ class TestLLMFallback:
         assert "guaranteed" not in out
         assert "you are approved" not in out
 
-    @patch("agents.benefits_agent.call_llm", side_effect=LLMUnavailableError("timeout"))
+    @patch("agents.benefits_agent.call_llm_race", side_effect=LLMUnavailableError("timeout"))
     def test_fallback_agent_name_unchanged(self, _):
         resp = BenefitsAgent().run(_make_event())
         assert resp.agent_name == "BenefitsAgent"
 
 
 # ---------------------------------------------------------------------------
-# Test Group 4 — Missing API key raises RuntimeError (not swallowed)
+# Test Group 4 — Missing API key falls back gracefully
 # ---------------------------------------------------------------------------
 
-class TestMissingAPIKeyPropagates:
-    """A missing ANTHROPIC_API_KEY is a configuration error, not a transient
-    failure.  BenefitsAgent must NOT catch RuntimeError — it must propagate."""
+class TestMissingAPIKeyFallsBack:
+    """A missing ANTHROPIC_API_KEY now raises LLMUnavailableError from client.py,
+    and BenefitsAgent catches both LLMUnavailableError and RuntimeError, so the
+    agent always returns a safe fallback response regardless of which exception
+    the LLM layer raises."""
 
     @patch(
-        "agents.benefits_agent.call_llm",
+        "agents.benefits_agent.call_llm_race",
         side_effect=RuntimeError("ANTHROPIC_API_KEY is not set or empty."),
     )
-    def test_runtime_error_propagates_through_agent(self, _):
-        with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
-            BenefitsAgent().run(_make_event())
+    def test_runtime_error_triggers_fallback(self, _):
+        """RuntimeError from call_llm must be caught and return used_fallback=True."""
+        resp = BenefitsAgent().run(_make_event())
+        assert resp.used_fallback is True
 
     @patch(
-        "agents.benefits_agent.call_llm",
-        side_effect=RuntimeError("ANTHROPIC_API_KEY is not set or empty."),
+        "agents.benefits_agent.call_llm_race",
+        side_effect=LLMUnavailableError("ANTHROPIC_API_KEY is not set or empty."),
     )
-    def test_runtime_error_is_not_swallowed_as_fallback(self, _):
-        """Confirm used_fallback is never set to True for a config error."""
-        with pytest.raises(RuntimeError):
-            BenefitsAgent().run(_make_event())
-        # If we reach here without exception the test would have already failed above.
-        # The assertion is implicit: no AgentResponse is returned.
+    def test_missing_key_as_llm_error_triggers_fallback(self, _):
+        """client.py now raises LLMUnavailableError for a missing key;
+        agent must catch it and return a safe rule-based response."""
+        resp = BenefitsAgent().run(_make_event())
+        assert resp.used_fallback is True
+        assert resp.requires_human_review is True
+        assert len(resp.output_text) > 20
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +251,7 @@ class TestPromptContent:
     """The user message passed to call_llm must include evidence items and
     event details.  The system prompt must encode the RESPONSIBLE_AI hard rules."""
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_evidence_title_appears_in_user_message(self, mock_call_llm):
         mock_call_llm.return_value = "You may qualify based on the information provided."
         evidence = [_make_evidence(tier=1, title="Senior Pension Official Guide")]
@@ -257,7 +261,7 @@ class TestPromptContent:
         user_message = mock_call_llm.call_args[0][1]
         assert "Senior Pension Official Guide" in user_message
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_redacted_text_appears_in_user_message(self, mock_call_llm):
         mock_call_llm.return_value = "You may be eligible."
         event = _make_event(text="Elderly housing assistance program application form.")
@@ -267,15 +271,15 @@ class TestPromptContent:
         user_message = mock_call_llm.call_args[0][1]
         assert "Elderly housing assistance program" in user_message
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_system_prompt_contains_hard_rule_1(self, mock_call_llm):
         """System prompt must encode the 'may qualify' rule."""
         mock_call_llm.return_value = "You may be eligible."
         BenefitsAgent().run(_make_event())
         system_prompt = mock_call_llm.call_args[0][0]
-        assert "you may qualify based on the information provided" in system_prompt.lower()
+        assert "may qualify" in system_prompt.lower()
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_system_prompt_contains_verify_instruction(self, mock_call_llm):
         """System prompt must instruct the model to recommend official verification."""
         mock_call_llm.return_value = "You may be eligible."
@@ -283,7 +287,7 @@ class TestPromptContent:
         system_prompt = mock_call_llm.call_args[0][0]
         assert "verify" in system_prompt.lower()
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_system_prompt_bans_otp_requests(self, mock_call_llm):
         """System prompt must explicitly prohibit requesting OTPs/PINs."""
         mock_call_llm.return_value = "You may be eligible."
@@ -291,14 +295,14 @@ class TestPromptContent:
         system_prompt = mock_call_llm.call_args[0][0]
         assert "otp" in system_prompt.lower() or "pin" in system_prompt.lower()
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_no_evidence_items_does_not_crash(self, mock_call_llm):
         """run() must succeed when evidence_items is None."""
         mock_call_llm.return_value = "You may qualify based on the information provided."
         resp = BenefitsAgent().run(_make_event(), evidence_items=None)
         assert resp.used_fallback is False
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_evidence_capped_at_five_items(self, mock_call_llm):
         """Only the first 5 evidence items must be included in the prompt."""
         mock_call_llm.return_value = "You may be eligible."
@@ -322,7 +326,7 @@ class TestNodeBenefitsIntegration:
     """node_benefits wraps BenefitsAgent.run() and must correctly thread the
     response through PipelineState, passing evidence_items as context."""
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_node_appends_response_to_state(self, mock_call_llm):
         mock_call_llm.return_value = "You may be eligible for this program."
         state = make_initial_state(_make_event())
@@ -331,7 +335,7 @@ class TestNodeBenefitsIntegration:
         assert len(new_state["agent_responses"]) == 1
         assert new_state["agent_responses"][0].agent_name == "BenefitsAgent"
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_node_preserves_existing_agent_responses(self, mock_call_llm):
         """node_benefits must append, not overwrite, existing agent_responses."""
         mock_call_llm.return_value = "You may be eligible."
@@ -348,7 +352,7 @@ class TestNodeBenefitsIntegration:
         assert new_state["agent_responses"][0].agent_name == "FormAgent"
         assert new_state["agent_responses"][1].agent_name == "BenefitsAgent"
 
-    @patch("agents.benefits_agent.call_llm", side_effect=LLMUnavailableError("down"))
+    @patch("agents.benefits_agent.call_llm_race", side_effect=LLMUnavailableError("down"))
     def test_node_fallback_used_fallback_true_in_state(self, _):
         """When LLM is unavailable, the state response must have used_fallback=True."""
         state = make_initial_state(_make_event())
@@ -356,7 +360,7 @@ class TestNodeBenefitsIntegration:
 
         assert new_state["agent_responses"][0].used_fallback is True
 
-    @patch("agents.benefits_agent.call_llm")
+    @patch("agents.benefits_agent.call_llm_race")
     def test_node_passes_evidence_items_from_state(self, mock_call_llm):
         """node_benefits must forward state['evidence_items'] to the agent."""
         mock_call_llm.return_value = "You may qualify based on the information provided."

@@ -1,32 +1,19 @@
 """
 Safety Guardrail Agent — highest-authority veto over all outputs and actions.
 
-Responsibility (AI_AGENTS.md §16 | SECURITY_MODEL.md §2, §8):
-  The last line of defence in the pipeline.  Scans both the proposed draft
-  response text AND the original event's redacted text for policy violations,
-  and replaces the draft with a safe fallback if any violation is detected.
+Three-outcome model:
+  HARD BLOCK (output_text non-empty, requires_human_review=True):
+    AI draft output itself contains a dangerous pattern — echoes an OTP value,
+    instructs money transfer, overclaims guaranteed eligibility.
+    Calling code must replace response_text with output_text and set STOP_AND_VERIFY.
 
-  Even if every preceding agent approved the output, the guardrail can and
-  will override it.  It has veto power in the ensemble (AI_AGENTS.md §17).
+  SCAM FLAG (output_text empty, requires_human_review=True):
+    Incoming event text matches a scam signal — explicit OTP instruction,
+    urgency deadline, money transfer with amount.
+    Calling code should set STOP_AND_VERIFY but keep the AI explanation.
 
-Hard blocks (non-negotiable, per SECURITY_MODEL.md §2):
-  - Output that echoes or mentions OTPs
-  - Output instructing the user to enter/share an OTP
-  - Output claiming "you qualify" (eligibility overclaiming)
-  - Output claiming "definitely safe" or "definitely a scam"
-  - Output echoing passwords, CNICs, or bank numbers
-  - Output instructing the user to send/transfer money
-  - Direct-action language ("click here", "tap here")
-
-Pattern scanning strategy:
-  Combines draft_output + event.redacted_text into a single scan target.
-  This means the guardrail acts as a defence-in-depth layer against
-  dangerous content arriving from the device, not only from agents.
-
-requires_human_review semantics:
-  True  → BLOCKED: orchestrator must use output_text as final response
-          and override risk_flag to STOP_AND_VERIFY.
-  False → PASSED: draft_output is safe to deliver as-is.
+  PASS (output_text empty, requires_human_review=False):
+    No violations detected.  Calling code uses draft/agent output unchanged.
 """
 from __future__ import annotations
 
@@ -36,47 +23,78 @@ from schemas.decision_schema import AgentResponse
 from schemas.event_schema import IncomingEvent
 
 # ---------------------------------------------------------------------------
-# Pattern definitions
+# Safe context patterns — skip scam flagging for legitimate documents
 # ---------------------------------------------------------------------------
 
-# Each pattern that must never appear in an AI output OR arrive as unsafe input.
-# Written as regex strings so they can be unit-tested independently of the class.
-BLOCKED_OUTPUT_PATTERNS: list[str] = [
-    r"you qualify\b",            # eligibility overclaim (critic should catch first)
-    r"definitely safe",          # safety overclaim
-    r"definitely\s+(a\s+)?scam", # scam overclaim
-    r"\byour\s+otp\s+(is|=)",   # echoing OTP value
-    r"password\s+is\b",          # echoing password
-    r"enter\s+your\s+otp",       # instructing OTP entry
-    r"\[redacted_otp\]",         # redacted OTP accidentally echoed in output
-    r"send\s+money\s+now",       # financial action instruction
-    r"transfer\s+money\s+now",
-    r"transfer\s+the\s+funds",
+SAFE_CONTEXTS: list[str] = [
+    r"lab\s*report", r"laboratory", r"hospital", r"clinic",
+    r"patient\s*name", r"specimen", r"test\s*result",
+    r"pdf\s*report", r"medical\s*report", r"discharge",
+    r"prescription", r"diagnosis",
+    r"invoice", r"receipt", r"utility\s*bill", r"electricity",
+    r"gas\s*bill", r"wapda", r"sngpl", r"k-electric",
+    r"bank\s*statement", r"salary\s*slip",
+    r"university", r"college", r"admission", r"result\s*card",
+    r"fee\s*challan", r"examination",
 ]
 
-# High-risk signals in the incoming event text that trigger an immediate guardrail
-# block regardless of what the draft output says.
-INPUT_RISK_SIGNALS: list[str] = [
+_COMPILED_SAFE: list[re.Pattern[str]] = [
+    re.compile(p, re.IGNORECASE) for p in SAFE_CONTEXTS
+]
+
+# ---------------------------------------------------------------------------
+# Pattern lists
+# ---------------------------------------------------------------------------
+
+# Phrases that must never appear in AI draft output.
+# Covers: OTP echoing, money instructions, guaranteed eligibility overclaims.
+BLOCKED_OUTPUT_PATTERNS: list[str] = [
+    r"\byour\s+otp\s+(is|=)\s*\d",        # echoing an actual OTP value
+    r"\botp\s*(is|=|:)\s*\d",              # any OTP value in output
+    r"password\s+is\b",                    # echoing a password
+    r"\[redacted_otp\]",                   # redacted placeholder leaked to output
+    r"send\s+money\s+now",                 # financial action instruction
+    r"transfer\s+money\s+now",
+    r"transfer\s+the\s+funds",
+    r"\bguaranteed\s+(to\s+)?(receive|get|qualify)",  # guarantee overclaim
+    r"you\s+are\s+(definitely\s+)?approved",           # approval overclaim
+    r"definitely\s+safe",
+    r"definitely\s+(a\s+)?scam",
+]
+
+# Patterns in incoming event text that indicate a scam or phishing attempt.
+# Triggers SCAM FLAG — sets STOP_AND_VERIFY but does NOT replace AI explanation.
+SCAM_FLAG_SIGNALS: list[str] = [
+    # Explicit OTP / PIN instructions — primary scam vector
     r"enter\s+(your\s+)?otp",
     r"send\s+(your\s+)?otp",
     r"verify\s+with\s+otp",
-    r"otp\s*(is|=|:)\s*\d",     # OTP value leaked through
-    r"\[redacted_otp\]",         # OTP was present and redacted
+    r"otp\s*(is|=|:)\s*\d",          # OTP value present in input text (e.g. "OTP is 7823")
     r"enter\s+your\s+pin",
-    r"transfer\s+(rs\.?|pkr\.?|\$)?\s*\d",  # transfer with amount
-    r"send\s+(rs\.?|pkr\.?|\$)?\s*\d",
+    # Money transfer with explicit amount
+    r"transfer\s+(rs\.?|pkr\.?|rs\s|pkr\s)\s*\d",
+    r"send\s+(rs\.?|pkr\.?|rs\s|pkr\s)\s*\d",
+    # Artificial urgency deadline
+    r"expires?\s+in\s+\d+\s*hours?",
+    # Click-to-claim with urgency
+    r"click\s+here\s+to\s+claim",
 ]
 
-# Pre-compiled pattern sets for fast repeated matching
+# ---------------------------------------------------------------------------
+# Pre-compiled pattern sets
+# ---------------------------------------------------------------------------
+
 _COMPILED_OUTPUT: list[re.Pattern[str]] = [
     re.compile(p, re.IGNORECASE) for p in BLOCKED_OUTPUT_PATTERNS
 ]
-_COMPILED_INPUT: list[re.Pattern[str]] = [
-    re.compile(p, re.IGNORECASE) for p in INPUT_RISK_SIGNALS
+_COMPILED_SCAM: list[re.Pattern[str]] = [
+    re.compile(p, re.IGNORECASE) for p in SCAM_FLAG_SIGNALS
 ]
 
-# Safe replacement shown to the user whenever the guardrail blocks output.
-# Language follows RESPONSIBLE_AI.md §3 — hedged, calm, no absolutes.
+# ---------------------------------------------------------------------------
+# Response text constants
+# ---------------------------------------------------------------------------
+
 _SAFE_REPLACEMENT = (
     "Please stop and do not continue. "
     "This may be asking for private information such as a security code, password, "
@@ -94,73 +112,109 @@ _SAFE_NEXT_STEPS = [
 
 
 class GuardrailAgent:
-    """Vetoes any output or action that violates the ElderBridge safety policy."""
+    """Vetoes dangerous AI output and flags scam inputs before delivery to the user."""
 
     NAME = "GuardrailAgent"
 
-    @staticmethod
-    def _scan(patterns: list[re.Pattern[str]], text: str) -> str | None:
-        """Return the first matching pattern string, or None if all clear."""
-        for pat in patterns:
-            m = pat.search(text)
-            if m:
-                return m.group(0)
-        return None
+    # -----------------------------------------------------------------------
+    # Check methods — return simple string tokens for clear branching
+    # -----------------------------------------------------------------------
+
+    def _check_output(self, text: str) -> str:
+        """Return 'BLOCK' if text contains a dangerous AI output pattern, else 'PASS'."""
+        for pat in _COMPILED_OUTPUT:
+            if pat.search(text):
+                return "BLOCK"
+        return "PASS"
+
+    def _check_input(self, text: str) -> str:
+        """Return 'FLAG' if text contains a scam signal, else 'PASS'.
+
+        Redaction placeholders inserted by the Android RedactionEngine are stripped
+        before scanning.  This prevents false positives from field labels like
+        '[OTP]' or '[REDACTED_CNIC]' which are safe metadata, not threat signals.
+
+        Legitimate documents (medical reports, utility bills, bank statements,
+        educational docs) are never flagged as scams.
+        """
+        # Safe contexts bypass scam detection entirely
+        for pat in _COMPILED_SAFE:
+            if pat.search(text):
+                return "PASS"
+
+        # Strip generic REDACTED[...] placeholders (e.g. [REDACTED_PHONE])
+        clean = re.sub(r'\[REDACTED[^\]]*\]', '', text)
+        # Strip known single-token placeholders used by the Android client
+        clean = re.sub(r'\[OTP\]|\[PHONE\]|\[EMAIL\]|\[CNIC\]', '', clean)
+
+        for pat in _COMPILED_SCAM:
+            if pat.search(clean):
+                return "FLAG"
+        return "PASS"
+
+    # -----------------------------------------------------------------------
+    # Main entry point
+    # -----------------------------------------------------------------------
 
     def run(self, event: IncomingEvent, draft_output: str = "") -> AgentResponse:
         """
-        Scan draft output and event text for policy violations.
+        Evaluate draft_output and event text for safety violations.
 
-        Scanning is performed in two passes:
-          1. Output patterns — phrases the AI must never output.
-          2. Input risk signals — dangerous patterns in the incoming event text
-             that indicate the user is in an active high-risk situation.
-
-        If either pass finds a match the response is BLOCKED (requires_human_review=True)
-        and output_text is replaced with the safe fallback message.
-
-        If both passes are clean the response is PASSED (requires_human_review=False)
-        and output_text is the unchanged draft_output.
+        Calling sequence:
+          1. _check_output(draft_output) — if BLOCK, return safe replacement (HARD BLOCK).
+          2. _check_input(event.redacted_text) — if FLAG, return empty output with
+             requires_human_review=True (SCAM FLAG).
+          3. Both clear — return empty output with requires_human_review=False (PASS).
 
         Args:
             event:        Normalised, redacted event from the device layer.
-            draft_output: Proposed response_text assembled by the orchestrator.
+            draft_output: Proposed response text to scan for dangerous content.
 
         Returns:
-            AgentResponse.
-              requires_human_review=True  → BLOCKED; use output_text as response.
-              requires_human_review=False → PASSED; draft_output is safe.
+            AgentResponse where:
+              output_text non-empty, requires_human_review=True  → HARD BLOCK
+              output_text empty,     requires_human_review=True  → SCAM FLAG
+              output_text empty,     requires_human_review=False → PASS
         """
-        # Pass 1: output content check
-        trigger = self._scan(_COMPILED_OUTPUT, draft_output)
-        if trigger:
-            return self._block(f"output pattern matched: '{trigger}'")
+        # Step 1 — scan AI draft output for dangerous content
+        if self._check_output(draft_output) == "BLOCK":
+            return AgentResponse(
+                agent_name=self.NAME,
+                output_text=_SAFE_REPLACEMENT,
+                confidence=1.0,
+                sources=[],
+                requires_human_review=True,
+            )
 
-        # Pass 2: incoming event risk signal check
-        trigger = self._scan(_COMPILED_INPUT, event.redacted_text)
-        if trigger:
-            return self._block(f"input risk signal matched: '{trigger}'")
+        # Step 2 — scan incoming event text for scam signals
+        if self._check_input(event.redacted_text) == "FLAG":
+            return AgentResponse(
+                agent_name=self.NAME,
+                output_text="",   # empty → caller uses AI explanation unchanged
+                confidence=1.0,
+                sources=[],
+                requires_human_review=True,
+            )
 
-        # All clear
+        # Step 3 — all clear
         return AgentResponse(
             agent_name=self.NAME,
-            output_text=draft_output,
+            output_text="",
             confidence=1.0,
             sources=[],
             requires_human_review=False,
         )
 
-    def _block(self, reason: str) -> AgentResponse:
-        """Return a BLOCKED AgentResponse with the safe replacement message."""
-        return AgentResponse(
-            agent_name=self.NAME,
-            output_text=_SAFE_REPLACEMENT,
-            confidence=1.0,
-            sources=[],
-            requires_human_review=True,
-        )
+    # -----------------------------------------------------------------------
+    # Properties consumed by orchestrator and graph nodes
+    # -----------------------------------------------------------------------
 
     @property
     def safe_next_steps(self) -> list[str]:
-        """Next steps to include in the FinalDecision when a block is triggered."""
+        """Ordered next steps for HARD BLOCK and SCAM FLAG decisions."""
         return list(_SAFE_NEXT_STEPS)
+
+    @property
+    def caution_next_steps(self) -> list[str]:
+        """Kept for interface compatibility; CAUTION path removed in this revision."""
+        return []

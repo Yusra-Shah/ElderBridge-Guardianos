@@ -273,15 +273,31 @@ def run_pipeline(event: IncomingEvent) -> FinalDecision:
     # ── Step 5: Guardrail ───────────────────────────────────────────────────
     guardrail_resp = _guardrail.run(event, response_text)
 
-    if guardrail_resp.requires_human_review:
-        # BLOCKED — override everything with the safe fallback
+    if guardrail_resp.requires_human_review and guardrail_resp.output_text:
+        # HARD BLOCK — AI output itself is dangerous; use safe replacement text.
         logger.warning(
-            "guardrail BLOCKED | event_type=%s source_app=%s",
+            "guardrail HARD BLOCKED | event_type=%s source_app=%s",
             event.event_type.value,
             event.source_app,
         )
         return FinalDecision(
             response_text=guardrail_resp.output_text,
+            risk_flag=RiskLevel.STOP_AND_VERIFY,
+            next_steps=_guardrail.safe_next_steps,
+            source_citations=[],
+        )
+
+    if guardrail_resp.requires_human_review:
+        # SCAM FLAG — scam detected in input; pass baseline response with STOP_AND_VERIFY.
+        # Specialist outputs are not used here; the baseline template for STOP_AND_VERIFY
+        # already carries appropriate guidance.
+        logger.warning(
+            "guardrail SCAM FLAGGED | event_type=%s source_app=%s",
+            event.event_type.value,
+            event.source_app,
+        )
+        return FinalDecision(
+            response_text=response_text,   # baseline STOP_AND_VERIFY template
             risk_flag=RiskLevel.STOP_AND_VERIFY,
             next_steps=_guardrail.safe_next_steps,
             source_citations=[],
