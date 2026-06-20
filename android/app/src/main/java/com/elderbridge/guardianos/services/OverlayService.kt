@@ -92,15 +92,17 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        tts = TextToSpeech(this) { status ->
-            ttsReady = (status == TextToSpeech.SUCCESS)
-            if (ttsReady) tts?.language = Locale.getDefault()
-        }
-        addBubble()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startAsForeground()
+        if (bubbleView == null) {
+            tts = TextToSpeech(this) { status ->
+                ttsReady = (status == TextToSpeech.SUCCESS)
+                if (ttsReady) tts?.language = Locale.getDefault()
+            }
+            addBubble()
+        }
         return START_STICKY
     }
 

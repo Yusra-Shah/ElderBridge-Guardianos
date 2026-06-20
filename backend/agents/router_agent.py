@@ -60,6 +60,51 @@ _SCAM_ESCALATION_SIGNALS = [
     "mubarak", "inaam", "inam", "khata",
 ]
 
+# ---------------------------------------------------------------------------
+# Low-signal screen detection — screens with no actionable content
+# ---------------------------------------------------------------------------
+
+_LOW_SIGNAL_APPS = [
+    "launcher", "nexuslauncher", "settings", "documentsui",
+    "filemanager", "deskclock", "calculator", "wallpaper",
+]
+
+_ACTIONABLE_CONTENT = [
+    "form", "apply", "enter", "submit", "payment", "transfer",
+    "otp", "password", "benefit", "pension", "message", "notice",
+    "bill", "statement", "document", "letter", "application",
+    "registration", "enrollment", "eligible", "cnic", "nadra",
+    "ehsaas", "bisp", "grant", "healthcare", "amount", "rupee",
+    "pkr", "bank", "account", "verify", "claim", "approve",
+    "income", "household", "dependent", "upload", "download",
+    "scam", "fraud", "prize", "lottery", "congratulations",
+    "urgent", "expire", "blocked", "suspended",
+]
+
+_LOW_SIGNAL_KEYWORDS = [
+    "home screen", "app drawer", "recent apps",
+    "file manager", "my files", "internal storage",
+    "downloads folder", "no new notification",
+]
+
+
+def _is_low_signal(text: str, source_app: str) -> bool:
+    """Return True if the screen has no actionable content worth analysing."""
+    text_lower = text.lower().strip()
+    source_lower = source_app.lower()
+
+    if len(text_lower) < 20:
+        return True
+
+    if any(kw in text_lower for kw in _LOW_SIGNAL_KEYWORDS):
+        return True
+
+    if any(app in source_lower for app in _LOW_SIGNAL_APPS):
+        if not any(a in text_lower for a in _ACTIONABLE_CONTENT):
+            return True
+
+    return False
+
 
 class RouterAgent:
     """Decides which specialist agents to invoke for a given event."""
@@ -87,12 +132,18 @@ class RouterAgent:
         Signal-aware secondary routing adds agents based on keywords found
         in the event's redacted text, regardless of event type.
 
+        Low-signal screens (home screen, app drawer, file manager, settings)
+        return an empty list so no specialist agents run.
+
         Args:
             event: Normalised, redacted event from the device layer.
 
         Returns:
             Ordered list of specialist agent name strings.
         """
+        if _is_low_signal(event.redacted_text, event.source_app):
+            return []
+
         agents: list[str] = list(self._BASE_ROUTING.get(event.event_type, ["ResearchAgent"]))
         text_lower = event.redacted_text.lower()
 

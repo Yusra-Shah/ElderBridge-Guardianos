@@ -20,6 +20,8 @@ Environment variables (set in deployment environment, never in code):
 """
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import hashlib
 import logging
 import time
@@ -48,11 +50,17 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from agents.chat_handler import handle_chat_question, _CHAT_FALLBACK
+from agents.form_cache import check_form_cache
+from agents.fraud_detector import detect_financial_fraud, FRAUD_BLOCK_RESPONSE, FRAUD_NEXT_STEPS
+from agents.injection_detector import detect_injection, INJECTION_BLOCK_RESPONSE
 from graph.build_graph import run_graph
-from schemas.decision_schema import FinalDecision
-from schemas.event_schema import IncomingEvent
+from middleware.security_middleware import check_rate_limit, validate_replay_protection, get_client_ip
+from schemas.decision_schema import FinalDecision, RiskLevel
+from schemas.event_schema import EventType, IncomingEvent
+from secure_logging.secure_logger import setup_secure_logging
 
 logger = logging.getLogger("elderbridge")
 
@@ -62,6 +70,62 @@ logger = logging.getLogger("elderbridge")
 # ---------------------------------------------------------------------------
 _response_cache: dict[str, tuple[float, FinalDecision]] = {}
 _CACHE_TTL = 300  # 5 minutes
+
+_SAFE_FALLBACK = FinalDecision(
+    response_text=(
+        "ElderBridge could not analyse this screen right now. "
+        "If you need urgent help, call 1122. "
+        "If this keeps happening, please restart the assistant."
+    ),
+    risk_flag=RiskLevel.NONE,
+    next_steps=[],
+    source_citations=[],
+)
+
+_pipeline_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
+# ---------------------------------------------------------------------------
+# Tiered timeouts by event type
+# ---------------------------------------------------------------------------
+_TIMEOUTS: dict[EventType, float] = {
+    EventType.SMS: 12.0,
+    EventType.NOTIFICATION: 12.0,
+    EventType.FORM_SCREEN: 40.0,
+    EventType.DOCUMENT: 40.0,
+}
+_DEFAULT_TIMEOUT = 25.0
+
+
+def _get_timeout(event: IncomingEvent) -> float:
+    return _TIMEOUTS.get(event.event_type, _DEFAULT_TIMEOUT)
+
+
+def _assemble_partial(state: dict) -> FinalDecision | None:
+    """Try to build a FinalDecision from partial pipeline state."""
+    responses = state.get("agent_responses", [])
+    _USER_FACING = {"BenefitsAgent", "FormAgent"}
+    non_fallback = [
+        r for r in responses
+        if not r.used_fallback and r.output_text and r.agent_name in _USER_FACING
+    ]
+    if non_fallback:
+        best = max(non_fallback, key=lambda r: r.confidence)
+        from agents.output_filter import filter_output
+        return FinalDecision(
+            response_text=filter_output(best.output_text),
+            risk_flag=state.get("risk_flag", RiskLevel.NONE),
+            next_steps=state.get("next_steps", []),
+            source_citations=state.get("evidence_items", []),
+        )
+    draft = state.get("draft_response", "")
+    if draft:
+        return FinalDecision(
+            response_text=draft,
+            risk_flag=state.get("risk_flag", RiskLevel.NONE),
+            next_steps=state.get("next_steps", []),
+            source_citations=[],
+        )
+    return None
 
 
 def _cache_key(event: IncomingEvent) -> str:
@@ -82,6 +146,8 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+setup_secure_logging()
 
 # ---------------------------------------------------------------------------
 # CORS — local dev / demo only
@@ -143,7 +209,7 @@ async def health_check() -> dict:
         "Plain-language guidance, risk level, next steps, and source citations."
     ),
 )
-async def analyze_event(event: IncomingEvent) -> FinalDecision:
+async def analyze_event(event: IncomingEvent, request: Request) -> FinalDecision:
     """
     Main decision endpoint called by the ElderBridge Android client.
 
@@ -157,34 +223,86 @@ async def analyze_event(event: IncomingEvent) -> FinalDecision:
     Returns a FinalDecision with a risk_flag, plain-language response_text,
     and ordered next_steps.
     """
-    if not event.redacted_text.strip():
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="redacted_text must not be empty.",
+    try:
+        client_ip = get_client_ip(request)
+        check_rate_limit(client_ip, "analyze-event")
+        if detect_injection(event.redacted_text):
+            return FinalDecision(
+                response_text=INJECTION_BLOCK_RESPONSE,
+                risk_flag=RiskLevel.STOP_AND_VERIFY,
+                next_steps=["Do not interact with this screen.", "Close it immediately."],
+                source_citations=[],
+            )
+
+        if detect_financial_fraud(event.redacted_text):
+            logger.warning("analyze-event | financial fraud detected for user=%s", event.user_id)
+            return FinalDecision(
+                response_text=FRAUD_BLOCK_RESPONSE,
+                risk_flag=RiskLevel.STOP_AND_VERIFY,
+                next_steps=FRAUD_NEXT_STEPS,
+                source_citations=[],
+            )
+
+        if not event.redacted_text.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="redacted_text must not be empty.",
+            )
+
+        logger.info(
+            "analyze-event | user=%s event_type=%s source_app=%s",
+            event.user_id,
+            event.event_type.value,
+            event.source_app,
         )
 
-    logger.info(
-        "analyze-event | user=%s event_type=%s source_app=%s",
-        event.user_id,
-        event.event_type.value,
-        event.source_app,
-        # NOTE: redacted_text intentionally excluded from logs to minimise
-        # log-based data retention surface (SECURITY_MODEL.md §9).
-    )
+        key = _cache_key(event)
+        cached = _response_cache.get(key)
+        if cached:
+            cached_time, cached_result = cached
+            if time.time() - cached_time < _CACHE_TTL:
+                print(f"[CACHE] Hit for event {key[:8]}")
+                logger.info("analyze-event | cache hit for user=%s", event.user_id)
+                return cached_result
+            del _response_cache[key]
 
-    key = _cache_key(event)
-    cached = _response_cache.get(key)
-    if cached:
-        cached_time, cached_result = cached
-        if time.time() - cached_time < _CACHE_TTL:
-            print(f"[CACHE] Hit for event {key[:8]}")
-            logger.info("analyze-event | cache hit for user=%s", event.user_id)
-            return cached_result
-        del _response_cache[key]
+        form_cached = check_form_cache(event.redacted_text, event.source_app)
+        if form_cached is not None:
+            print(f"[FORM_CACHE] Hit for user {event.user_id}")
+            logger.info("analyze-event | form cache hit for user=%s", event.user_id)
+            _response_cache[key] = (time.time(), form_cached)
+            return form_cached
 
-    result = run_graph(event)
-    _response_cache[key] = (time.time(), result)
-    return result
+        timeout = _get_timeout(event)
+        loop = asyncio.get_running_loop()
+        partial_store: dict = {}
+        try:
+            result = await asyncio.wait_for(
+                loop.run_in_executor(
+                    _pipeline_executor,
+                    lambda: run_graph(event, partial_store),
+                ),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("analyze-event | pipeline timed out after %.0fs", timeout)
+            partial_state = partial_store.get("state")
+            if partial_state:
+                partial_result = _assemble_partial(partial_state)
+                if partial_result is not None:
+                    logger.info("analyze-event | assembled partial result for user=%s", event.user_id)
+                    _response_cache[key] = (time.time(), partial_result)
+                    return partial_result
+            return _SAFE_FALLBACK
+
+        _response_cache[key] = (time.time(), result)
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Pipeline failure: %s", type(exc).__name__)
+        return _SAFE_FALLBACK
 
 
 # ---------------------------------------------------------------------------
@@ -212,3 +330,55 @@ async def save_user_profile(user_id: str, profile: UserProfile) -> dict:
 async def get_user_profile(user_id: str) -> dict:
     """Retrieve a stored user profile, or empty dict if not found."""
     return _user_profiles.get(user_id, {})
+
+
+# ---------------------------------------------------------------------------
+# Chat endpoint — lightweight follow-up questions (FIX 2)
+# ---------------------------------------------------------------------------
+
+class ChatRequest(BaseModel):
+    user_id: str = Field(..., min_length=1, max_length=64)
+    question: str = Field(..., min_length=1, max_length=1024)
+    screen_context: str = Field(default="", max_length=2048)
+
+
+_CHAT_TIMEOUT = 8.0
+
+
+@app.post(
+    "/ask-question",
+    response_model=FinalDecision,
+    tags=["chat"],
+    summary="Answer a follow-up question about the current screen.",
+)
+async def ask_question(req: ChatRequest, request: Request) -> FinalDecision:
+    """Lightweight chat path: single LLM call, no full pipeline."""
+    try:
+        client_ip = get_client_ip(request)
+        check_rate_limit(client_ip, "ask-question")
+
+        if detect_injection(req.question):
+            return FinalDecision(
+                response_text=INJECTION_BLOCK_RESPONSE,
+                risk_flag=RiskLevel.STOP_AND_VERIFY,
+                next_steps=["Do not interact with this screen.", "Close it immediately."],
+                source_citations=[],
+            )
+
+        logger.info("ask-question | user=%s", req.user_id)
+
+        loop = asyncio.get_running_loop()
+        result = await asyncio.wait_for(
+            loop.run_in_executor(
+                _pipeline_executor,
+                lambda: handle_chat_question(req.question, req.screen_context),
+            ),
+            timeout=_CHAT_TIMEOUT,
+        )
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Chat failure: %s", type(exc).__name__)
+        return _CHAT_FALLBACK

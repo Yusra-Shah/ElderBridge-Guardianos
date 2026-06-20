@@ -15,6 +15,7 @@ Node execution order (set in build_graph.py):
 """
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 
 from agents.benefits_agent import BenefitsAgent
@@ -25,9 +26,12 @@ from agents.research_agent import ResearchAgent
 from agents.router_agent import RouterAgent
 from graph.state import PipelineState
 from orchestrator import compute_baseline
-from schemas.decision_schema import EvidenceItem, FinalDecision, RiskLevel
+from schemas.decision_schema import AgentResponse, EvidenceItem, FinalDecision, RiskLevel
 
 logger = logging.getLogger("elderbridge.graph.nodes")
+
+_AGENT_TIMEOUT = 15  # seconds per specialist agent
+_RESEARCH_TIMEOUT = 8  # shorter budget for research enrichment
 
 # ---------------------------------------------------------------------------
 # Singleton agent instances — stateless, safe to share across requests
@@ -90,7 +94,29 @@ def node_benefits(state: PipelineState) -> PipelineState:
     Appends to: agent_responses.
     Reads: event, evidence_items (passed as supporting context to the LLM).
     """
-    resp = _benefits.run(state["event"], evidence_items=state.get("evidence_items", []))
+    def _run():
+        return _benefits.run(state["event"], evidence_items=state.get("evidence_items", []))
+
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = ex.submit(_run)
+    try:
+        resp = future.result(timeout=_AGENT_TIMEOUT)
+    except (concurrent.futures.TimeoutError, Exception) as exc:
+        logger.warning("node_benefits | timed out or failed (%s), using fallback", exc)
+        resp = AgentResponse(
+            agent_name="BenefitsAgent",
+            output_text=(
+                "I could not complete the analysis in time. Please verify your "
+                "eligibility directly with the official agency or a trusted caseworker."
+            ),
+            confidence=0.1,
+            sources=[],
+            requires_human_review=True,
+            used_fallback=True,
+        )
+    finally:
+        ex.shutdown(wait=False)
+
     if resp.used_fallback:
         logger.warning("node_benefits | LLM unavailable — rule-based fallback response used")
     else:
@@ -112,7 +138,30 @@ def node_form(state: PipelineState) -> PipelineState:
     visible field in plain language.  Falls back to a rule-based stub on
     LLMUnavailableError (used_fallback=True on the response).
     """
-    resp = _form.run(state["event"])
+    def _run():
+        return _form.run(state["event"])
+
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = ex.submit(_run)
+    try:
+        resp = future.result(timeout=_AGENT_TIMEOUT)
+    except (concurrent.futures.TimeoutError, Exception) as exc:
+        logger.warning("node_form | timed out or failed (%s), using fallback", exc)
+        resp = AgentResponse(
+            agent_name="FormAgent",
+            output_text=(
+                "This form is asking for standard personal information needed to "
+                "process your application. If you are unsure about any field, ask "
+                "a trusted person to help you fill it in correctly."
+            ),
+            confidence=0.1,
+            sources=[],
+            requires_human_review=True,
+            used_fallback=True,
+        )
+    finally:
+        ex.shutdown(wait=False)
+
     if resp.used_fallback:
         logger.warning("node_form | LLM unavailable — rule-based fallback used")
     else:
@@ -125,16 +174,29 @@ def node_form(state: PipelineState) -> PipelineState:
 
 def node_research(state: PipelineState) -> PipelineState:
     """
-    Run the Research Verification Agent.
+    Run the Research Verification Agent with its own sub-timeout.
+
+    Non-blocking for the final answer: if research does not return in time,
+    the pipeline proceeds with FormAgent and BenefitsAgent output and omits
+    the extra citations.
 
     Appends to: agent_responses, evidence_items.
     Reads: event.
-
-    ResearchAgent is the only node that populates evidence_items — it
-    carries EvidenceItem objects from the mock source database (or, in a
-    future milestone, from a live RAG / web-search backend).
     """
-    resp = _research.run(state["event"])
+    def _run():
+        return _research.run(state["event"])
+
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = ex.submit(_run)
+    try:
+        resp = future.result(timeout=_RESEARCH_TIMEOUT)
+    except (concurrent.futures.TimeoutError, Exception) as exc:
+        logger.warning("node_research | timed out or failed (%s), skipping", exc)
+        ex.shutdown(wait=False)
+        return state
+    finally:
+        ex.shutdown(wait=False)
+
     logger.debug(
         "node_research | confidence=%.2f evidence=%d requires_review=%s",
         resp.confidence,
@@ -142,7 +204,6 @@ def node_research(state: PipelineState) -> PipelineState:
         resp.requires_human_review,
     )
 
-    # Deduplicate evidence by source_id before extending state
     existing_ids = {e.source_id for e in state.get("evidence_items", [])}
     new_evidence = [e for e in resp.evidence_items if e.source_id not in existing_ids]
 
@@ -219,6 +280,9 @@ def node_guardrail(state: PipelineState) -> PipelineState:
     draft = state.get("draft_response", "")
 
     guardrail_resp = _guardrail.run(event, draft)
+
+    from agents.output_filter import filter_output
+    draft = filter_output(draft)
 
     if guardrail_resp.output_text:
         # HARD BLOCK — AI output is directly dangerous; replace with safe text.

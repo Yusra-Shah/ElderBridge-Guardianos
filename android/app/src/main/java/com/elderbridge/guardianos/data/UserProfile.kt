@@ -6,8 +6,7 @@ data class UserProfile(
     val fullName: String = "",
     val location: String = "",
     val emergencyContact: String = "",
-    val caregiverContact: String = "",
-    val preferredLanguage: String = "English"
+    val caregiverContact: String = ""
 )
 
 object UserProfileStore {
@@ -19,7 +18,6 @@ object UserProfileStore {
             .putString("location", profile.location)
             .putString("emergency_contact", profile.emergencyContact)
             .putString("caregiver_contact", profile.caregiverContact)
-            .putString("preferred_language", profile.preferredLanguage)
             .apply()
     }
 
@@ -29,8 +27,7 @@ object UserProfileStore {
             fullName = p.getString("full_name", "") ?: "",
             location = p.getString("location", "") ?: "",
             emergencyContact = p.getString("emergency_contact", "") ?: "",
-            caregiverContact = p.getString("caregiver_contact", "") ?: "",
-            preferredLanguage = p.getString("preferred_language", "English") ?: "English"
+            caregiverContact = p.getString("caregiver_contact", "") ?: ""
         )
     }
 

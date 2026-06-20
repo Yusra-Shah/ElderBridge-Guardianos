@@ -40,10 +40,18 @@ _OFFLINE_FORM_RESPONSE = (
     "If you are unsure about any field, ask a trusted person to help you."
 )
 
+_OFFLINE_CHAT_RESPONSE = (
+    "Here is the answer to your question. "
+    "Please ask a trusted person if you need more help."
+)
+
 
 @pytest.fixture(autouse=True)
 def _stub_llm_offline():
-    """Patch call_llm in both BenefitsAgent and FormAgent for every test."""
+    """Patch LLM calls in all agents for offline testing."""
     with patch("agents.benefits_agent.call_llm", return_value=_OFFLINE_LLM_RESPONSE), \
-         patch("agents.form_agent.call_llm", return_value=_OFFLINE_FORM_RESPONSE):
+         patch("agents.benefits_agent.call_llm_race", return_value=_OFFLINE_LLM_RESPONSE), \
+         patch("agents.form_agent.call_llm", return_value=_OFFLINE_FORM_RESPONSE), \
+         patch("agents.form_agent.call_llm_race", return_value=_OFFLINE_FORM_RESPONSE), \
+         patch("agents.chat_handler.call_llm", return_value=_OFFLINE_CHAT_RESPONSE):
         yield
