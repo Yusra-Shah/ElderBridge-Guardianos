@@ -1,10 +1,11 @@
 package com.elderbridge.guardianos.ui.state
 
 /**
- * Data model for an onboarding page in the UI.
+ * UI model representing a single onboarding slide.
+ * Reconciled with original field names for merge compatibility.
  */
 data class OnboardingPageUiModel(
+    val emoji: String,
     val title: String,
-    val description: String,
-    val illustrationEmoji: String // Placeholder for future Lottie/Vector illustrations
+    val body: String
 )

@@ -12,30 +12,32 @@ class OnboardingViewModel : ViewModel() {
 
     private val pages = listOf(
         OnboardingPageUiModel(
+            emoji = "👋",
             title = "Welcome to ElderBridge",
-            description = "We help you understand health forms, government letters, and benefits — right on your phone.",
-            illustrationEmoji = "👋"
+            body = "We help you understand health forms, government letters, and benefits — right on your phone."
         ),
         OnboardingPageUiModel(
+            emoji = "🔍",
             title = "We Explain Things",
-            description = "When you open a confusing form or letter, we show a simple explanation in plain language.",
-            illustrationEmoji = "🔍"
+            body = "When you open a confusing form or letter, we show a simple explanation in plain language."
         ),
         OnboardingPageUiModel(
+            emoji = "🔒",
             title = "Your Privacy is Safe",
-            description = "We never read your passwords or security codes. Your personal information never leaves your phone.",
-            illustrationEmoji = "🔒"
+            body = "We never read your passwords or security codes. Your personal information never leaves your phone."
         ),
         OnboardingPageUiModel(
+            emoji = "✅",
             title = "You're Always in Control",
-            description = "You can turn off the assistant at any time with a single tap on your home screen.",
-            illustrationEmoji = "✅"
+            body = "You can turn off the assistant at any time with a single tap on your home screen."
         )
     )
 
     private val _uiState = MutableStateFlow(
         OnboardingUiState(
             pages = pages,
+            currentPageIndex = 0,
+            isLastPage = false,
             progress = 1f / pages.size
         )
     )

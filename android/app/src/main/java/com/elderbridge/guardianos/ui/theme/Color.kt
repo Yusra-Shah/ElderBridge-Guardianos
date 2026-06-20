@@ -2,9 +2,8 @@ package com.elderbridge.guardianos.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// --- Core Brand Colors ---
-// Primary — deep trustworthy blue used throughout the UI
-val ElderBlue = Color(0xFF1565C0)
+// --- Core Brand Colors (Reconciled with User Preferences) ---
+val ElderBlue = Color(0xFF1565C0) // Original brand blue
 val ElderBlueDark = Color(0xFF003C8F)
 val ElderBlueLight = Color(0xFF5E92F3)
 val ElderBluePale = Color(0xFFE3F2FD)

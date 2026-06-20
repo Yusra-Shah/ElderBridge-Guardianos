@@ -54,7 +54,7 @@ fun OnboardingScreen(
                 .padding(horizontal = 24.dp, vertical = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Top Progress Dots
+            // Top Progress Dots (Reconciled with original design)
             Row(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -78,7 +78,7 @@ fun OnboardingScreen(
             Surface(
                 onClick = { 
                     currentPage?.let { 
-                        SpeechManager.speak("${it.title}. ${it.description}") 
+                        SpeechManager.speak("${it.title}. ${it.body}") 
                     }
                 },
                 shape = RoundedCornerShape(16.dp),
@@ -117,7 +117,7 @@ fun OnboardingScreen(
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Navigation Buttons
+            // Navigation Buttons (Reconciled with original logic)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -175,7 +175,7 @@ private fun PremiumOnboardingCard(page: OnboardingPageUiModel) {
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = page.illustrationEmoji,
+                    text = page.emoji,
                     fontSize = 80.sp,
                     modifier = Modifier.scale(emojiScale)
                 )
@@ -194,7 +194,7 @@ private fun PremiumOnboardingCard(page: OnboardingPageUiModel) {
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = page.description,
+                text = page.body,
                 style = MaterialTheme.typography.bodyLarge,
                 color = TextSecondary,
                 textAlign = TextAlign.Center,

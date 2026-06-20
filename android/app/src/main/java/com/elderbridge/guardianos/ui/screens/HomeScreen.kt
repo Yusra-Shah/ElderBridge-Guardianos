@@ -54,7 +54,7 @@ fun HomeScreen(onTryDemo: () -> Unit, onHistory: () -> Unit, onProfile: () -> Un
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(28.dp)
         ) {
-            // App header
+            // App Header (Reconciled from original design)
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     text = "ElderBridge",
@@ -72,21 +72,20 @@ fun HomeScreen(onTryDemo: () -> Unit, onHistory: () -> Unit, onProfile: () -> Un
                 )
             }
 
-            // Status indicator + toggle (Premium version)
+            // Hero Status Card (Premium Version)
             StatusHeroCard(status = status)
 
+            // Assistant Monitoring Toggle Card
             PremiumCard {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
                         Text(
                             text = "Assistant Monitoring",
                             style = MaterialTheme.typography.titleLarge,
-                            color = TextPrimary,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
@@ -99,29 +98,18 @@ fun HomeScreen(onTryDemo: () -> Unit, onHistory: () -> Unit, onProfile: () -> Un
                             modifier = Modifier.padding(top = 6.dp)
                         )
                     }
+
                     PremiumSwitch(
                         checked = isMonitoringEnabled,
                         onCheckedChange = { enabled ->
                             if (enabled) {
                                 if (!Settings.canDrawOverlays(context)) {
-                                    Toast.makeText(
-                                        context,
-                                        "Please grant Display Over Apps permission first",
-                                        Toast.LENGTH_LONG
-                                    ).show()
+                                    Toast.makeText(context, "Please grant Display Over Apps permission first", Toast.LENGTH_LONG).show()
                                 } else {
-                                    val enabledServices = Settings.Secure.getString(
-                                        context.contentResolver,
-                                        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-                                    ) ?: ""
-                                    val component =
-                                        "${context.packageName}/${ScreenReaderService::class.java.name}"
+                                    val enabledServices = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
+                                    val component = "${context.packageName}/${ScreenReaderService::class.java.name}"
                                     if (!enabledServices.contains(component, ignoreCase = true)) {
-                                        Toast.makeText(
-                                            context,
-                                            "Please enable ElderBridge in Accessibility Settings first",
-                                            Toast.LENGTH_LONG
-                                        ).show()
+                                        Toast.makeText(context, "Please enable ElderBridge in Accessibility Settings first", Toast.LENGTH_LONG).show()
                                     } else {
                                         val intent = Intent(context, OverlayService::class.java)
                                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -143,28 +131,23 @@ fun HomeScreen(onTryDemo: () -> Unit, onHistory: () -> Unit, onProfile: () -> Un
                 }
             }
 
-            // Demo entry point
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                PremiumCard(onClick = onTryDemo) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(56.dp)
-                                .background(ElderBluePale, CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.Lightbulb, null, tint = ElderBlue)
-                        }
-                        Spacer(Modifier.width(16.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Try a Demo", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Text("See how the assistant explains forms", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
-                        }
-                        Icon(Icons.Default.ChevronRight, null, tint = TextSecondary)
+            // Demo Action Card
+            PremiumCard(onClick = onTryDemo) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .background(ElderBluePale, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Lightbulb, null, tint = ElderBlue)
                     }
+                    Spacer(Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Try a Demo", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text("See how the assistant explains forms", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                    }
+                    Icon(Icons.Default.ChevronRight, null, tint = TextSecondary)
                 }
             }
         }

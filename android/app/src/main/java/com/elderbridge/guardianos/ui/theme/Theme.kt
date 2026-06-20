@@ -63,7 +63,7 @@ fun ElderBridgeGuardianosTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            // Following user's original preference: Primary colored status bar with light icons
+            // Using original preference: Primary color status bar with light icons
             window.statusBarColor = colorScheme.primary.toArgb()
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = false
         }
