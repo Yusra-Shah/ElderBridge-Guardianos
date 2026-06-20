@@ -20,6 +20,8 @@ Environment variables (set in deployment environment, never in code):
 """
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import hashlib
 import logging
 import time
@@ -63,6 +65,19 @@ logger = logging.getLogger("elderbridge")
 # ---------------------------------------------------------------------------
 _response_cache: dict[str, tuple[float, FinalDecision]] = {}
 _CACHE_TTL = 300  # 5 minutes
+
+_SAFE_FALLBACK = FinalDecision(
+    response_text=(
+        "ElderBridge could not analyse this screen right now. "
+        "If you need urgent help, call 1122. "
+        "If this keeps happening, please restart the assistant."
+    ),
+    risk_flag=RiskLevel.NONE,
+    next_steps=[],
+    source_citations=[],
+)
+
+_pipeline_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
 
 def _cache_key(event: IncomingEvent) -> str:
@@ -160,46 +175,57 @@ async def analyze_event(event: IncomingEvent, request: Request) -> FinalDecision
     Returns a FinalDecision with a risk_flag, plain-language response_text,
     and ordered next_steps.
     """
-    from middleware.security_middleware import check_rate_limit, validate_replay_protection, get_client_ip
-    from agents.injection_detector import detect_injection, INJECTION_BLOCK_RESPONSE
-    client_ip = get_client_ip(request)
-    check_rate_limit(client_ip, "analyze-event")
-    if detect_injection(event.redacted_text):
-        return FinalDecision(
-            response_text=INJECTION_BLOCK_RESPONSE,
-            risk_flag=RiskLevel.STOP_AND_VERIFY,
-            next_steps=["Do not interact with this screen.", "Close it immediately."],
-            source_citations=[],
+    try:
+        from middleware.security_middleware import check_rate_limit, validate_replay_protection, get_client_ip
+        from agents.injection_detector import detect_injection, INJECTION_BLOCK_RESPONSE
+        client_ip = get_client_ip(request)
+        check_rate_limit(client_ip, "analyze-event")
+        if detect_injection(event.redacted_text):
+            return FinalDecision(
+                response_text=INJECTION_BLOCK_RESPONSE,
+                risk_flag=RiskLevel.STOP_AND_VERIFY,
+                next_steps=["Do not interact with this screen.", "Close it immediately."],
+                source_citations=[],
+            )
+
+        if not event.redacted_text.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="redacted_text must not be empty.",
+            )
+
+        logger.info(
+            "analyze-event | user=%s event_type=%s source_app=%s",
+            event.user_id,
+            event.event_type.value,
+            event.source_app,
+            # NOTE: redacted_text intentionally excluded from logs to minimise
+            # log-based data retention surface (SECURITY_MODEL.md §9).
         )
 
-    if not event.redacted_text.strip():
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="redacted_text must not be empty.",
+        key = _cache_key(event)
+        cached = _response_cache.get(key)
+        if cached:
+            cached_time, cached_result = cached
+            if time.time() - cached_time < _CACHE_TTL:
+                print(f"[CACHE] Hit for event {key[:8]}")
+                logger.info("analyze-event | cache hit for user=%s", event.user_id)
+                return cached_result
+            del _response_cache[key]
+
+        loop = asyncio.get_running_loop()
+        result = await asyncio.wait_for(
+            loop.run_in_executor(_pipeline_executor, run_graph, event),
+            timeout=12.0,
         )
+        _response_cache[key] = (time.time(), result)
+        return result
 
-    logger.info(
-        "analyze-event | user=%s event_type=%s source_app=%s",
-        event.user_id,
-        event.event_type.value,
-        event.source_app,
-        # NOTE: redacted_text intentionally excluded from logs to minimise
-        # log-based data retention surface (SECURITY_MODEL.md §9).
-    )
-
-    key = _cache_key(event)
-    cached = _response_cache.get(key)
-    if cached:
-        cached_time, cached_result = cached
-        if time.time() - cached_time < _CACHE_TTL:
-            print(f"[CACHE] Hit for event {key[:8]}")
-            logger.info("analyze-event | cache hit for user=%s", event.user_id)
-            return cached_result
-        del _response_cache[key]
-
-    result = run_graph(event)
-    _response_cache[key] = (time.time(), result)
-    return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Pipeline failure: %s", type(exc).__name__)
+        return _SAFE_FALLBACK
 
 
 # ---------------------------------------------------------------------------

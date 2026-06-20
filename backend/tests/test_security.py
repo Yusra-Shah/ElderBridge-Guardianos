@@ -1,13 +1,14 @@
 """
 Security hardening tests for ElderBridge GuardianOS.
 
-Six test suites:
+Seven test suites:
   1. OTP redaction          — SecurePIIFilter redacts OTP/PIN/code values in logs
   2. Identity redaction     — SecurePIIFilter redacts CNIC and card numbers in logs
   3. Injection detection    — detect_injection catches 13 prompt injection patterns
   4. Injection false pos.   — detect_injection allows 8 safe / benign inputs
   5. Action guardrail       — contains_forbidden_action blocks 6 / allows 5 phrases
   6. Output filter          — filter_output scrubs 4 sensitive data patterns
+  7. Safe fallback          — pipeline errors return safe 200 response with 1122
 
 Run from backend/:
     pytest tests/test_security.py -v
@@ -15,11 +16,14 @@ Run from backend/:
 from __future__ import annotations
 
 import logging
+from unittest.mock import patch
 
 import pytest
+from fastapi.testclient import TestClient
 
 from agents.injection_detector import detect_injection, get_injection_reason, INJECTION_BLOCK_RESPONSE
 from agents.output_filter import filter_output, contains_forbidden_action, validate_output_safe
+from main import app, _SAFE_FALLBACK
 from secure_logging.secure_logger import SecurePIIFilter
 
 
@@ -228,3 +232,30 @@ class TestOutputFilter:
 
     def test_block_response_is_nonempty(self):
         assert len(INJECTION_BLOCK_RESPONSE) > 0
+
+
+# ---------------------------------------------------------------------------
+# Test Suite 7 — Safe fallback on pipeline failure
+# ---------------------------------------------------------------------------
+
+class TestSafeFallback:
+
+    def test_pipeline_exception_returns_safe_fallback(self):
+        """Mock run_graph to raise; endpoint must return 200 with fallback."""
+        client = TestClient(app, raise_server_exceptions=False)
+        with patch("main.run_graph", side_effect=RuntimeError("LLM exploded")):
+            resp = client.post("/analyze-event", json={
+                "event_type": "SMS",
+                "source_app": "com.android.messaging",
+                "redacted_text": "Safe fallback test — unique payload for mock test.",
+                "timestamp": "2026-06-15T10:00:00Z",
+                "user_id": "usr_test_fallback",
+            })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["risk_flag"] == "none"
+        assert "1122" in body["response_text"]
+
+    def test_fallback_response_contains_1122(self):
+        assert len(_SAFE_FALLBACK.response_text) > 0
+        assert "1122" in _SAFE_FALLBACK.response_text
