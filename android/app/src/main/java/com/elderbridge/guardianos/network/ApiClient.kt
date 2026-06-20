@@ -22,7 +22,7 @@ object ApiClient {
     //
     // File: android/app/src/main/java/com/elderbridge/guardianos/network/ApiClient.kt
     // ─────────────────────────────────────────────────────────────────────────
-    const val BASE_URL = "http://10.227.79.7:8000"
+    const val BASE_URL = "http://0.0.0.0:8000"
 
     private val gson = GsonBuilder()
         .serializeNulls()
