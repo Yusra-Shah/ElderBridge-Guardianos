@@ -13,7 +13,7 @@ object HistoryStore {
             timestamp = Instant.now().toString(),
             screenText = screenText,
             response = response,
-            riskLevel = riskLevel
+            riskLevel = riskLevel,
         )
         synchronized(entries) {
             entries.add(0, entry)

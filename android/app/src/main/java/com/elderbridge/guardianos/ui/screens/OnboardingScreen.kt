@@ -1,143 +1,232 @@
 package com.elderbridge.guardianos.ui.screens
 
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-
-private data class OnboardingPage(
-    val emoji: String,
-    val title: String,
-    val body: String
-)
-
-private val pages = listOf(
-    OnboardingPage(
-        emoji = "👋",
-        title = "Welcome to ElderBridge",
-        body = "We help you understand health forms, government letters, and benefits — right on your phone."
-    ),
-    OnboardingPage(
-        emoji = "🔍",
-        title = "We Explain Things",
-        body = "When you open a confusing form or letter, we show a simple explanation in plain language."
-    ),
-    OnboardingPage(
-        emoji = "🔒",
-        title = "Your Privacy is Safe",
-        body = "We never read your passwords or security codes. Your personal information never leaves your phone."
-    ),
-    OnboardingPage(
-        emoji = "✅",
-        title = "You're Always in Control",
-        body = "You can turn off the assistant at any time with a single tap on your home screen."
-    )
-)
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.elderbridge.guardianos.speech.SpeechManager
+import com.elderbridge.guardianos.ui.state.OnboardingPageUiModel
+import com.elderbridge.guardianos.ui.viewmodel.OnboardingViewModel
+import com.elderbridge.guardianos.ui.theme.*
 
 @Composable
-fun OnboardingScreen(onFinished: () -> Unit) {
-    var currentPage by remember { mutableIntStateOf(0) }
-    val page = pages[currentPage]
+fun OnboardingScreen(
+    onFinished: () -> Unit,
+    vm: OnboardingViewModel = viewModel()
+) {
+    val state by vm.uiState.collectAsState()
+    val currentPage = state.pages.getOrNull(state.currentPageIndex)
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 28.dp, vertical = 56.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
+            .background(BackgroundLight)
     ) {
-        // Progress dots
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            pages.indices.forEach { i ->
-                Box(
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 24.dp, vertical = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Top Progress Section
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                LinearProgressIndicator(
+                    progress = { state.progress },
                     modifier = Modifier
-                        .size(if (i == currentPage) 14.dp else 8.dp)
-                        .background(
-                            color = if (i == currentPage) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-                            shape = RoundedCornerShape(50)
-                        )
+                        .weight(1f)
+                        .height(12.dp)
+                        .clip(CircleShape),
+                    color = ElderBlue,
+                    trackColor = ElderBlueLight,
+                    strokeCap = StrokeCap.Round
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Text(
+                    text = "${state.currentPageIndex + 1}/${state.pages.size}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = TextSecondary,
+                    fontWeight = FontWeight.Bold
                 )
             }
-        }
 
-        // Main content — large emoji, bold title, plain body
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // TTS Hint / Accessibility Button
+            Surface(
+                onClick = { 
+                    currentPage?.let { 
+                        SpeechManager.speak("${it.title}. ${it.description}") 
+                    }
+                },
+                shape = RoundedCornerShape(16.dp),
+                color = ElderBlueLight.copy(alpha = 0.5f),
+                modifier = Modifier.align(Alignment.Start)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.VolumeUp, contentDescription = null, tint = ElderBlue, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Read Aloud", style = MaterialTheme.typography.labelMedium, color = ElderBlue)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Main Content Area with Animations
+            Box(modifier = Modifier.weight(1f)) {
+                AnimatedContent(
+                    targetState = state.currentPageIndex,
+                    transitionSpec = {
+                        if (targetState > initialState) {
+                            (slideInHorizontally { width -> width } + fadeIn()).togetherWith(slideOutHorizontally { width -> -width } + fadeOut())
+                        } else {
+                            (slideInHorizontally { width -> -width } + fadeIn()).togetherWith(slideOutHorizontally { width -> width } + fadeOut())
+                        }.using(SizeTransform(clip = false))
+                    },
+                    label = "pageTransition"
+                ) { targetIndex ->
+                    val page = state.pages[targetIndex]
+                    OnboardingCard(page = page)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Navigation Controls
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Back/Skip
+                if (state.currentPageIndex > 0) {
+                    TextButton(
+                        onClick = { vm.previousPage() },
+                        modifier = Modifier.height(56.dp)
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Back", fontSize = 18.sp)
+                    }
+                } else {
+                    TextButton(
+                        onClick = onFinished,
+                        modifier = Modifier.height(56.dp)
+                    ) {
+                        Text("Skip", fontSize = 18.sp, color = TextSecondary)
+                    }
+                }
+
+                // Next / Get Started
+                val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                val isPressed by interactionSource.collectIsPressedAsState()
+                val buttonScale by animateFloatAsState(if (isPressed) 0.95f else 1f, label = "buttonScale")
+
+                Button(
+                    onClick = { vm.nextPage(onFinished) },
+                    interactionSource = interactionSource,
+                    modifier = Modifier
+                        .height(64.dp)
+                        .widthIn(min = 160.dp)
+                        .scale(buttonScale),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (state.isLastPage) ActiveGreen else ElderBlue
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = if (state.isLastPage) "Get Started" else "Next",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp
+                        )
+                        if (!state.isLastPage) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun OnboardingCard(page: OnboardingPageUiModel) {
+    Card(
+        modifier = Modifier.fillMaxSize(),
+        shape = RoundedCornerShape(32.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceLight),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
         Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(vertical = 16.dp)
+            verticalArrangement = Arrangement.Center
         ) {
-            Text(
-                text = page.emoji,
-                style = MaterialTheme.typography.displayLarge,
-                modifier = Modifier.padding(bottom = 36.dp)
-            )
+            // Large Illustration Placeholder
+            Box(
+                modifier = Modifier
+                    .size(180.dp)
+                    .background(ElderBlueLight, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = page.illustrationEmoji,
+                    fontSize = 80.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(48.dp))
+
             Text(
                 text = page.title,
                 style = MaterialTheme.typography.headlineLarge,
-                color = MaterialTheme.colorScheme.onBackground,
+                fontWeight = FontWeight.ExtraBold,
+                color = TextPrimary,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(bottom = 24.dp)
+                lineHeight = 40.sp
             )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
             Text(
-                text = page.body,
+                text = page.description,
                 style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
+                color = TextSecondary,
+                textAlign = TextAlign.Center,
+                lineHeight = 32.sp,
+                fontSize = 20.sp
             )
-        }
-
-        // Navigation — 64dp tall buttons for easy tapping
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Button(
-                onClick = {
-                    if (currentPage < pages.lastIndex) currentPage++ else onFinished()
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(64.dp),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Text(
-                    text = if (currentPage < pages.lastIndex) "Next" else "Get Started",
-                    style = MaterialTheme.typography.labelLarge
-                )
-            }
-
-            if (currentPage < pages.lastIndex) {
-                Spacer(modifier = Modifier.height(16.dp))
-                TextButton(
-                    onClick = onFinished,
-                    modifier = Modifier.height(56.dp)
-                ) {
-                    Text(
-                        text = "Skip",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
         }
     }
 }

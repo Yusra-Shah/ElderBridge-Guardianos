@@ -1,230 +1,337 @@
 package com.elderbridge.guardianos.ui.screens
 
-import android.content.Intent
-import android.os.Build
-import android.provider.Settings
-import android.widget.Toast
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.elderbridge.guardianos.data.UserProfileStore
-import com.elderbridge.guardianos.services.OverlayService
-import com.elderbridge.guardianos.services.ScreenReaderService
-import com.elderbridge.guardianos.ui.theme.ActiveGreen
-import com.elderbridge.guardianos.ui.theme.ActiveGreenLight
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.elderbridge.guardianos.ui.state.SystemStatus
+import com.elderbridge.guardianos.ui.viewmodel.HomeViewModel
+import com.elderbridge.guardianos.ui.theme.*
 
 @Composable
-fun HomeScreen(onTryDemo: () -> Unit, onHistory: () -> Unit, onProfile: () -> Unit) {
+fun HomeScreen(
+    onTryDemo: () -> Unit,
+    onHistory: () -> Unit,
+    onProfile: () -> Unit,
+    vm: HomeViewModel = viewModel()
+) {
     val context = LocalContext.current
-    var isMonitoringEnabled by remember { mutableStateOf(UserProfileStore.isAssistantEnabled(context)) }
+    val state by vm.uiState.collectAsState()
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 28.dp, vertical = 56.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        // App header
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = "ElderBridge",
-                style = MaterialTheme.typography.headlineLarge,
-                color = MaterialTheme.colorScheme.primary,
-                textAlign = TextAlign.Center
-            )
-            Text(
-                text = "Guardian Assistant",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 4.dp)
-            )
+    LaunchedEffect(Unit) {
+        vm.loadInitialState(context)
+    }
+
+    val pulseScale by animateFloatAsState(
+        targetValue = when (state.systemStatus) {
+            SystemStatus.ACTIVE -> 1.04f
+            SystemStatus.ANALYZING -> 1.08f
+            SystemStatus.SCAM_DETECTED -> 1.12f
+            SystemStatus.OFF -> 1f
+        },
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse"
+    )
+
+    Scaffold(
+        containerColor = BackgroundLight,
+        bottomBar = {
+            HomeBottomNavigation(onHistory = onHistory, onProfile = onProfile)
         }
-
-        // Status indicator + toggle
+    ) { padding ->
         Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(32.dp)
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 24.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(28.dp)
         ) {
-            StatusCircle(isActive = isMonitoringEnabled)
-
-            Card(
+            // HEADER SECTION
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(24.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
-                        Text(
-                            text = "Assistant Monitoring",
-                            style = MaterialTheme.typography.titleLarge,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Text(
-                            text = if (isMonitoringEnabled)
-                                "Active — I am watching over your apps"
-                            else
-                                "Tap the switch to turn me on",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 6.dp)
-                        )
-                    }
-                    Switch(
-                        checked = isMonitoringEnabled,
-                        onCheckedChange = { enabled ->
-                            if (enabled) {
-                                if (!Settings.canDrawOverlays(context)) {
-                                    Toast.makeText(
-                                        context,
-                                        "Please grant Display Over Apps permission first",
-                                        Toast.LENGTH_LONG
-                                    ).show()
-                                } else {
-                                    val enabledServices = Settings.Secure.getString(
-                                        context.contentResolver,
-                                        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-                                    ) ?: ""
-                                    val component =
-                                        "${context.packageName}/${ScreenReaderService::class.java.name}"
-                                    if (!enabledServices.contains(component, ignoreCase = true)) {
-                                        Toast.makeText(
-                                            context,
-                                            "Please enable ElderBridge in Accessibility Settings first",
-                                            Toast.LENGTH_LONG
-                                        ).show()
-                                    } else {
-                                        val intent = Intent(context, OverlayService::class.java)
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                            context.startForegroundService(intent)
-                                        } else {
-                                            context.startService(intent)
-                                        }
-                                        UserProfileStore.setAssistantEnabled(context, true)
-                                        isMonitoringEnabled = true
-                                    }
-                                }
-                            } else {
-                                context.stopService(Intent(context, OverlayService::class.java))
-                                UserProfileStore.setAssistantEnabled(context, false)
-                                isMonitoringEnabled = false
-                            }
-                        },
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = ActiveGreen,
-                            checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                        )
+                Column {
+                    Text(
+                        text = "ElderBridge",
+                        style = MaterialTheme.typography.displayMedium,
+                        color = ElderBlue,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Text(
+                        text = "Guardian Assistant",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = TextSecondary
                     )
                 }
+                
+                Surface(
+                    onClick = onProfile,
+                    shape = CircleShape,
+                    color = ElderBlueLight,
+                    modifier = Modifier.size(56.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.Person, contentDescription = "Profile", tint = ElderBlue, modifier = Modifier.size(32.dp))
+                    }
+                }
             }
-        }
 
-        // Demo entry point
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Button(
-                onClick = onTryDemo,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(64.dp),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Text(text = "Try a Demo", style = MaterialTheme.typography.labelLarge)
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                text = "See how the assistant explains forms",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
+            // STATUS CORE CARD
+            MainStatusCard(state.systemStatus, pulseScale)
+
+            // ENABLE/DISABLE TOGGLE SECTION
+            AssistantToggleCard(
+                isEnabled = state.isMonitoringEnabled,
+                onToggle = { vm.toggleAssistant(context, it) }
             )
-            Spacer(modifier = Modifier.height(16.dp))
-            OutlinedButton(
-                onClick = onHistory,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Text(text = "View History", style = MaterialTheme.typography.labelLarge)
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = onProfile,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Text(text = "My Profile", style = MaterialTheme.typography.labelLarge)
-            }
+
+            // CTA SECTION
+            DemoActionCard(onTryDemo)
+            
+            Spacer(modifier = Modifier.weight(1f))
         }
     }
 }
 
 @Composable
-private fun StatusCircle(isActive: Boolean) {
-    val bgColor = if (isActive) ActiveGreenLight else MaterialTheme.colorScheme.surfaceVariant
-    val textColor = if (isActive) ActiveGreen else MaterialTheme.colorScheme.onSurfaceVariant
+private fun MainStatusCard(status: SystemStatus, pulseScale: Float) {
+    val containerColor = when (status) {
+        SystemStatus.ACTIVE -> ActiveGreenLight
+        SystemStatus.ANALYZING -> ElderBlueLight
+        SystemStatus.SCAM_DETECTED -> ErrorRedLight
+        SystemStatus.OFF -> SurfaceLight
+    }
 
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+    val iconColor = when (status) {
+        SystemStatus.ACTIVE -> ActiveGreen
+        SystemStatus.ANALYZING -> ElderBlue
+        SystemStatus.SCAM_DETECTED -> ErrorRed
+        SystemStatus.OFF -> TextSecondary
+    }
+
+    val statusText = when (status) {
+        SystemStatus.ACTIVE -> "Assistant Active"
+        SystemStatus.ANALYZING -> "Scanning Screen..."
+        SystemStatus.SCAM_DETECTED -> "Potential Scam Detected!"
+        SystemStatus.OFF -> "Protection is Disabled"
+    }
+
+    val statusIcon = when (status) {
+        SystemStatus.ACTIVE -> Icons.Default.Shield
+        SystemStatus.ANALYZING -> Icons.Default.Search
+        SystemStatus.SCAM_DETECTED -> Icons.Default.ReportProblem
+        SystemStatus.OFF -> Icons.Default.ShieldMoon
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(260.dp),
+        shape = RoundedCornerShape(32.dp),
+        colors = CardDefaults.cardColors(containerColor = containerColor),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(120.dp)
-                .clip(CircleShape)
-                .background(bgColor)
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(140.dp)
+                    .scale(pulseScale)
+                    .background(
+                        brush = Brush.radialGradient(
+                            colors = listOf(iconColor.copy(alpha = 0.2f), Color.Transparent)
+                        ),
+                        shape = CircleShape
+                    )
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = iconColor,
+                    modifier = Modifier.size(100.dp),
+                    shadowElevation = 6.dp
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = statusIcon,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(48.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
+
             Text(
-                text = if (isActive) "ON" else "OFF",
+                text = statusText,
                 style = MaterialTheme.typography.headlineMedium,
-                color = textColor
+                color = iconColor,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
             )
         }
-        Text(
-            text = if (isActive) "Assistant is Active" else "Assistant is Off",
-            style = MaterialTheme.typography.bodyLarge,
-            color = textColor
-        )
+    }
+}
+
+@Composable
+private fun AssistantToggleCard(isEnabled: Boolean, onToggle: (Boolean) -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceLight),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = if (!isEnabled) CardDefaults.outlinedCardBorder() else null
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(24.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .background(if (isEnabled) ActiveGreenLight else BackgroundLight, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (isEnabled) Icons.Default.LockOpen else Icons.Default.Lock,
+                    contentDescription = null,
+                    tint = if (isEnabled) ActiveGreen else TextSecondary
+                )
+            }
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Shield Protection",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = if (isEnabled) "You are protected" else "Tap to turn on",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextSecondary
+                )
+            }
+
+            Switch(
+                checked = isEnabled,
+                onCheckedChange = onToggle,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = ActiveGreen,
+                    uncheckedThumbColor = TextSecondary,
+                    uncheckedTrackColor = BackgroundLight
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun DemoActionCard(onTryDemo: () -> Unit) {
+    Surface(
+        onClick = onTryDemo,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = ElderBlue,
+        shadowElevation = 4.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(24.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.Lightbulb, contentDescription = null, tint = Color.White, modifier = Modifier.size(32.dp))
+            Spacer(Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Learn with Demo",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Practice recognizing scams",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.8f)
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = null,
+                tint = Color.White
+            )
+        }
+    }
+}
+
+@Composable
+private fun HomeBottomNavigation(onHistory: () -> Unit, onProfile: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(100.dp)
+            .clip(RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)),
+        color = SurfaceLight,
+        shadowElevation = 16.dp
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            NavigationItem(icon = Icons.Default.Home, label = "Home", isSelected = true, onClick = {})
+            NavigationItem(icon = Icons.Default.History, label = "History", isSelected = false, onClick = onHistory)
+            NavigationItem(icon = Icons.Default.ManageAccounts, label = "Profile", isSelected = false, onClick = onProfile)
+        }
+    }
+}
+
+@Composable
+private fun NavigationItem(icon: ImageVector, label: String, isSelected: Boolean, onClick: () -> Unit) {
+    val tint = if (isSelected) ElderBlue else TextSecondary
+    
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(8.dp)
+    ) {
+        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(32.dp))
+        Text(text = label, color = tint, style = MaterialTheme.typography.labelLarge, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
     }
 }

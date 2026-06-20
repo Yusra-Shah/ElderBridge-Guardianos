@@ -25,6 +25,7 @@ class ScreenReaderService : AccessibilityService() {
                 handler.removeCallbacks(captureRunnable)
                 handler.postDelayed(captureRunnable, DEBOUNCE_MS)
             }
+            else -> {}
         }
     }
 
@@ -83,7 +84,7 @@ class ScreenReaderService : AccessibilityService() {
     }
 
     private fun walkNode(node: AccessibilityNodeInfo, sb: StringBuilder, depth: Int) {
-        if (depth > MAX_DEPTH || sb.length > MAX_CHARS) return
+        if ((depth > MAX_DEPTH) || (sb.length > MAX_CHARS)) return
         if (!node.isVisibleToUser) return
 
         node.text?.toString()?.takeIf { it.isNotBlank() }?.let {

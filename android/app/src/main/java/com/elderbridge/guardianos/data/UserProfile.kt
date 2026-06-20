@@ -7,7 +7,7 @@ data class UserProfile(
     val location: String = "",
     val emergencyContact: String = "",
     val caregiverContact: String = "",
-    val preferredLanguage: String = "English"
+    val preferredLanguage: String = "English",
 )
 
 object UserProfileStore {

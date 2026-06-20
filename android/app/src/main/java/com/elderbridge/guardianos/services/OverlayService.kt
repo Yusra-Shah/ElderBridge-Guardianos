@@ -35,6 +35,7 @@ import com.elderbridge.guardianos.network.ApiClient
 import com.elderbridge.guardianos.network.FinalDecision
 import com.elderbridge.guardianos.network.IncomingEvent
 import com.elderbridge.guardianos.redaction.ScreenContentHolder
+import com.elderbridge.guardianos.speech.SpeechManager
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -72,7 +73,7 @@ class OverlayService : Service() {
     private data class SavedResponse(
         val headerText: String,
         val bodyText: String,
-        val riskFlag: String
+        val riskFlag: String,
     )
     private var savedResponse: SavedResponse? = null
 
@@ -84,18 +85,12 @@ class OverlayService : Service() {
     private var isChatMode = false
     private var currentAiResponse: String = ""
 
-    private var tts: TextToSpeech? = null
-    private var ttsReady = false
-
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        tts = TextToSpeech(this) { status ->
-            ttsReady = (status == TextToSpeech.SUCCESS)
-            if (ttsReady) tts?.language = Locale.getDefault()
-        }
+        SpeechManager.init(this)
         addBubble()
     }
 
@@ -202,7 +197,10 @@ class OverlayService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!dragged) toggleExpanded()
+            if (!dragged) {
+                frame.performClick()
+                toggleExpanded()
+            }
                     true
                 }
                 else -> false
@@ -234,45 +232,46 @@ class OverlayService : Service() {
         val by = bubbleParams?.y ?: 200
 
         val menuParams = WindowManager.LayoutParams(
-            (170 * dp).toInt(),
+            (200 * dp).toInt(),
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = bx + (70 * dp).toInt()
+            x = bx + (75 * dp).toInt()
             y = by
         }
 
-        val pad = (10 * dp).toInt()
-        val gap = (6 * dp).toInt()
+        val pad = (12 * dp).toInt()
+        val gap = (8 * dp).toInt()
         val menu = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
-            background = roundedDrawable(Color.parseColor("#1A237E"), 12 * dp)
+            background = roundedDrawable(Color.parseColor("#1E293B"), 20 * dp) // Modern dark slate
         }
 
         fun addBtn(label: String, color: String, last: Boolean = false, onClick: () -> Unit) {
             val btn = Button(this).apply {
                 text = label
-                textSize = 13f
+                textSize = 15f
                 isAllCaps = false
                 setTextColor(Color.WHITE)
-                background = roundedDrawable(Color.parseColor(color), 8 * dp)
+                background = roundedDrawable(Color.parseColor(color), 12 * dp)
+                setPadding(0, (12 * dp).toInt(), 0, (12 * dp).toInt())
                 setOnClickListener { onClick() }
             }
             menu.addView(btn, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
+                (56 * dp).toInt() // Accessibility-friendly height
             ).apply { if (!last) bottomMargin = gap })
         }
 
-        addBtn("Search Screen",  "#1565C0") { hideMenu(); expandCard() }
-        addBtn("Ask a Question", "#1565C0") { hideMenu(); expandCard(startInChatMode = true) }
-        addBtn("Emergency 1122", "#C62828") { hideMenu(); doEmergencyCall() }
-        addBtn("Alert Family",   "#E65100") { hideMenu(); doAlertFamily() }
-        addBtn("Close Menu",     "#37474F", last = true) { hideMenu() }
+        addBtn("Search Screen",  "#1E40AF") { hideMenu(); expandCard() }
+        addBtn("Ask Questions",  "#1E40AF") { hideMenu(); expandCard(startInChatMode = true) }
+        addBtn("Emergency Call", "#DC2626") { hideMenu(); doEmergencyCall() }
+        addBtn("Alert Family",   "#D97706") { hideMenu(); doAlertFamily() }
+        addBtn("Close Menu",     "#475569", last = true) { hideMenu() }
 
         menuView = menu
         try {
@@ -280,7 +279,6 @@ class OverlayService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "showMenu addView failed: ${e.message}")
         }
-        Log.d(TAG, "Menu shown")
     }
 
     private fun hideMenu() {
@@ -594,7 +592,7 @@ class OverlayService : Service() {
                 cardHeaderView?.text = saved.headerText
                 cardBodyView?.text = saved.bodyText
                 readAloudBtn?.setOnClickListener {
-                    if (ttsReady) tts?.speak(saved.bodyText, TextToSpeech.QUEUE_FLUSH, null, "eb_tts")
+                    SpeechManager.speak(saved.bodyText)
                 }
                 actionRow?.visibility = View.VISIBLE
             } else if (hasEnoughContent) {
@@ -609,7 +607,7 @@ class OverlayService : Service() {
         analyzeJob = null
         savedResponse = null
         stopBubblePulse()
-        tts?.stop()
+        SpeechManager.stop()
         isChatMode = false
         currentAiResponse = ""
         cardHeaderView = null
@@ -632,7 +630,7 @@ class OverlayService : Service() {
     // Hides the card but lets any in-flight analysis complete and save to history.
     // The bubble continues pulsing while the job is active.
     private fun minimizeCard() {
-        tts?.stop()
+        SpeechManager.stop()
         isChatMode = false
         currentAiResponse = ""
         cardHeaderView = null
@@ -718,7 +716,7 @@ class OverlayService : Service() {
         cardHeaderView?.text = "ElderBridge says:"
         cardBodyView?.text = decision.responseText
         readAloudBtn?.setOnClickListener {
-            if (ttsReady) tts?.speak(decision.responseText, TextToSpeech.QUEUE_FLUSH, null, "eb_tts")
+            SpeechManager.speak(decision.responseText)
         }
         actionRow?.visibility = View.VISIBLE
     }
@@ -879,9 +877,7 @@ class OverlayService : Service() {
         super.onDestroy()
         serviceScope.cancel()       // cancels analyzeJob and all child coroutines
         stopBubblePulse()
-        tts?.stop()
-        tts?.shutdown()
-        tts = null
+        SpeechManager.shutdown()
         hideMenu()
         bubbleView?.let {
             try { windowManager.removeView(it) } catch (e: Exception) { Log.w(TAG, "removeView bubble: ${e.message}") }

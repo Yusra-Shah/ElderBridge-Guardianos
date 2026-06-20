@@ -22,7 +22,7 @@ object ApiClient {
     //
     // File: android/app/src/main/java/com/elderbridge/guardianos/network/ApiClient.kt
     // ─────────────────────────────────────────────────────────────────────────
-    const val BASE_URL = "http://192.168.100.94:8000/"
+    const val BASE_URL = "http://10.227.79.7:8000"
 
     private val gson = GsonBuilder()
         .serializeNulls()
@@ -36,9 +36,11 @@ object ApiClient {
             .apply {
                 // Body-level logging only in debug builds — never in release
                 if (BuildConfig.DEBUG) {
-                    addInterceptor(HttpLoggingInterceptor().apply {
-                        level = HttpLoggingInterceptor.Level.BODY
-                    })
+                    addInterceptor(
+                        HttpLoggingInterceptor().apply {
+                            level = HttpLoggingInterceptor.Level.BODY
+                        },
+                    )
                 }
             }
             .build()

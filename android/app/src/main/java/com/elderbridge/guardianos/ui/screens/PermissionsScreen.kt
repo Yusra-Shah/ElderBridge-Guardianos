@@ -1,189 +1,271 @@
 package com.elderbridge.guardianos.ui.screens
 
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import android.provider.Settings
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.elderbridge.guardianos.ui.theme.ActiveGreen
-import com.elderbridge.guardianos.ui.theme.ActiveGreenLight
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.elderbridge.guardianos.ui.state.PermissionActionType
+import com.elderbridge.guardianos.ui.state.PermissionItemUiModel
+import com.elderbridge.guardianos.ui.viewmodel.PermissionsViewModel
+import com.elderbridge.guardianos.ui.theme.*
 
 @Composable
-fun PermissionsScreen(onContinue: () -> Unit) {
+fun PermissionsScreen(
+    onContinue: () -> Unit,
+    vm: PermissionsViewModel = viewModel()
+) {
     val context = LocalContext.current
-    // refreshKey increments when user taps "Check again" after returning from Settings
-    var refreshKey by remember { mutableIntStateOf(0) }
+    val state by vm.uiState.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-    val hasAccessibility = remember(refreshKey) { isScreenReaderEnabled(context) }
-    val hasNotificationAccess = remember(refreshKey) { isNotificationAccessEnabled(context) }
-    val hasOverlay = remember(refreshKey) { Settings.canDrawOverlays(context) }
+    // Auto-refresh permissions when user returns from Settings
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                vm.refreshStatus(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
-    Column(
+    // Initial check
+    LaunchedEffect(Unit) {
+        vm.checkPermissions(context)
+    }
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 48.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .background(BackgroundLight)
     ) {
-        Text(
-            text = "Allow Permissions",
-            style = MaterialTheme.typography.headlineLarge,
-            color = MaterialTheme.colorScheme.onBackground,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(bottom = 12.dp)
-        )
-        Text(
-            text = "These let ElderBridge help you.",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(bottom = 40.dp)
-        )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 24.dp, vertical = 32.dp)
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Header Section
+            Text(
+                text = "Setup Your Protection",
+                style = MaterialTheme.typography.headlineLarge,
+                color = ElderBlue,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "Follow these 3 steps to help ElderBridge protect you from scams.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = TextSecondary,
+                textAlign = TextAlign.Center,
+                lineHeight = 30.sp
+            )
 
-        PermissionCard(
-            title = "Accessibility Service",
-            description = "Lets us see what is on your screen so we can explain it to you.",
-            isGranted = hasAccessibility,
-            onEnable = {
-                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Progress Dashboard
+            SetupProgressCard(state)
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Guided Cards
+            state.permissionItems.forEachIndexed { index, item ->
+                SetupStepCard(
+                    item = item,
+                    stepNumber = index + 1,
+                    onAction = {
+                        when (item.actionType) {
+                            PermissionActionType.ACCESSIBILITY -> vm.openAccessibilitySettings(context)
+                            PermissionActionType.NOTIFICATION -> vm.openNotificationSettings(context)
+                            PermissionActionType.OVERLAY -> vm.openOverlaySettings(context)
+                        }
+                    }
+                )
+                Spacer(modifier = Modifier.height(20.dp))
             }
-        )
-        Spacer(modifier = Modifier.height(20.dp))
 
-        PermissionCard(
-            title = "Notification Access",
-            description = "Lets us explain notifications from health and government apps.",
-            isGranted = hasNotificationAccess,
-            onEnable = {
-                context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-            }
-        )
-        Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(32.dp))
 
-        PermissionCard(
-            title = "Display Over Apps",
-            description = "Lets us show a small helper bubble while you use other apps.",
-            isGranted = hasOverlay,
-            onEnable = {
-                context.startActivity(
-                    Intent(
-                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:${context.packageName}")
-                    )
+            // Final Action Button
+            val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+            val isPressed by interactionSource.collectIsPressedAsState()
+            val buttonScale by animateFloatAsState(if (isPressed) 0.95f else 1f, label = "buttonScale")
+
+            Button(
+                onClick = onContinue,
+                interactionSource = interactionSource,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(64.dp)
+                    .scale(buttonScale),
+                shape = RoundedCornerShape(20.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (state.allGranted) ActiveGreen else ElderBlue
+                ),
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
+            ) {
+                Text(
+                    text = if (state.allGranted) "Complete Setup" else "Continue Anyway",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp
                 )
             }
-        )
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        // After returning from system Settings, user taps this to re-check grant status
-        TextButton(
-            onClick = { refreshKey++ },
-            modifier = Modifier.height(56.dp)
-        ) {
-            Text(
-                text = "Check status again",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
         }
+    }
+}
 
-        Spacer(modifier = Modifier.height(16.dp))
+@Composable
+private fun SetupProgressCard(state: com.elderbridge.guardianos.ui.state.PermissionsUiState) {
+    val animatedProgress by animateFloatAsState(
+        targetValue = state.progress,
+        animationSpec = spring(stiffness = Spring.StiffnessLow),
+        label = "progress"
+    )
 
-        Button(
-            onClick = onContinue,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(64.dp),
-            shape = RoundedCornerShape(16.dp)
-        ) {
-            Text(
-                text = if (hasAccessibility && hasNotificationAccess && hasOverlay)
-                    "Continue" else "Continue Anyway",
-                style = MaterialTheme.typography.labelLarge
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceLight),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Setup Progress",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = TextPrimary
+                )
+                Text(
+                    text = "${state.completedSteps} of ${state.totalSteps} steps",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = ElderBlue,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            LinearProgressIndicator(
+                progress = { animatedProgress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(12.dp)
+                    .clip(CircleShape),
+                color = if (state.allGranted) ActiveGreen else ElderBlue,
+                trackColor = ElderBlueLight,
+                strokeCap = StrokeCap.Round
             )
         }
     }
 }
 
 @Composable
-private fun PermissionCard(
-    title: String,
-    description: String,
-    isGranted: Boolean,
-    onEnable: () -> Unit
+private fun SetupStepCard(
+    item: PermissionItemUiModel,
+    stepNumber: Int,
+    onAction: () -> Unit
 ) {
+    val cardBgColor by animateColorAsState(
+        targetValue = if (item.isGranted) ActiveGreenLight else SurfaceLight,
+        label = "cardBg"
+    )
+
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = cardBgColor),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (item.isGranted) 0.dp else 2.dp),
+        border = if (item.isGranted) null else CardDefaults.outlinedCardBorder()
     ) {
         Column(modifier = Modifier.padding(20.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier.fillMaxWidth()
             ) {
+                // Step Badge
+                Surface(
+                    color = if (item.isGranted) ActiveGreen else ElderBlueLight,
+                    shape = CircleShape,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        if (item.isGranted) {
+                            Icon(Icons.Default.Check, "Done", tint = Color.White, modifier = Modifier.size(24.dp))
+                        } else {
+                            Text("$stepNumber", color = ElderBlue, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.width(16.dp))
+                
                 Text(
-                    text = title,
+                    text = item.title,
                     style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
+                    fontWeight = FontWeight.Bold,
+                    color = TextPrimary,
                     modifier = Modifier.weight(1f)
                 )
-                Spacer(modifier = Modifier.width(12.dp))
-                GrantedChip(isGranted = isGranted)
+                
+                // Status Chip
+                StatusChip(isGranted = item.isGranted)
             }
-            Spacer(modifier = Modifier.height(10.dp))
+
+            Spacer(modifier = Modifier.height(12.dp))
+            
             Text(
-                text = description,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                text = item.description,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (item.isGranted) ActiveGreen.copy(alpha = 0.8f) else TextSecondary,
+                lineHeight = 28.sp
             )
-            if (!isGranted) {
-                Spacer(modifier = Modifier.height(16.dp))
-                OutlinedButton(
-                    onClick = onEnable,
+
+            if (!item.isGranted) {
+                Spacer(modifier = Modifier.height(20.dp))
+                Button(
+                    onClick = onAction,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp),
-                    shape = RoundedCornerShape(12.dp)
+                        .height(64.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = ElderBlue)
                 ) {
-                    Text(
-                        text = "Enable in Settings",
-                        style = MaterialTheme.typography.labelLarge
-                    )
+                    Text("Enable Protection Step $stepNumber", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(Icons.Default.ChevronRight, null)
                 }
             }
         }
@@ -191,45 +273,28 @@ private fun PermissionCard(
 }
 
 @Composable
-private fun GrantedChip(isGranted: Boolean) {
+private fun StatusChip(isGranted: Boolean) {
     Surface(
-        color = if (isGranted) ActiveGreenLight else MaterialTheme.colorScheme.errorContainer,
+        color = if (isGranted) ActiveGreenLight else Divider.copy(alpha = 0.3f),
         shape = RoundedCornerShape(50)
     ) {
-        Text(
-            text = if (isGranted) "✓ Granted" else "Not granted",
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (isGranted) ActiveGreen else MaterialTheme.colorScheme.error,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-        )
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(if (isGranted) ActiveGreen else TextSecondary, CircleShape)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (isGranted) "Enabled" else "Pending",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (isGranted) ActiveGreen else TextSecondary
+            )
+        }
     }
 }
 
-/**
- * Returns true only when ScreenReaderService specifically is listed in the enabled
- * accessibility services setting. Checking the full component name avoids false
- * positives from other accessibility services the user may have enabled from this package.
- *
- * The setting stores entries as "pkg/ComponentClass" separated by ":", in either
- * short (pkg/.ClassName) or long (pkg/pkg.ClassName) form.
- */
-private fun isScreenReaderEnabled(context: Context): Boolean {
-    val enabled = Settings.Secure.getString(
-        context.contentResolver,
-        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-    ) ?: return false
-    return enabled.split(':').any { entry ->
-        val parts = entry.trim().split('/')
-        parts.size == 2 &&
-            parts[0].equals(context.packageName, ignoreCase = true) &&
-            parts[1].contains("ScreenReaderService", ignoreCase = true)
-    }
-}
-
-private fun isNotificationAccessEnabled(context: Context): Boolean {
-    val enabled = Settings.Secure.getString(
-        context.contentResolver,
-        "enabled_notification_listeners"
-    ) ?: return false
-    return enabled.contains(context.packageName, ignoreCase = true)
-}

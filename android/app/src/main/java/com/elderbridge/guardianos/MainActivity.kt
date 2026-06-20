@@ -7,20 +7,22 @@ import androidx.activity.enableEdgeToEdge
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.elderbridge.guardianos.speech.SpeechManager
 import com.elderbridge.guardianos.ui.screens.HistoryScreen
 import com.elderbridge.guardianos.ui.screens.HomeScreen
 import com.elderbridge.guardianos.ui.screens.OnboardingScreen
 import com.elderbridge.guardianos.ui.screens.OverlayPreviewScreen
 import com.elderbridge.guardianos.ui.screens.PermissionsScreen
 import com.elderbridge.guardianos.ui.screens.ProfileScreen
-import com.elderbridge.guardianos.ui.theme.ElderBridgeGuardianosTheme
+import com.elderbridge.guardianos.ui.theme.ElderBridgeTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        SpeechManager.init(this)
         enableEdgeToEdge()
         setContent {
-            ElderBridgeGuardianosTheme {
+            ElderBridgeTheme {
                 val navController = rememberNavController()
                 NavHost(navController = navController, startDestination = "onboarding") {
                     composable("onboarding") {
@@ -56,5 +58,10 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        SpeechManager.shutdown()
     }
 }

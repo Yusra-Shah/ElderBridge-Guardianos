@@ -17,7 +17,7 @@ data class IncomingEvent(
     @SerializedName("source_app")    val sourceApp: String,
     @SerializedName("redacted_text") val redactedText: String,
     @SerializedName("timestamp")     val timestamp: String,
-    @SerializedName("user_id")       val userId: String
+    @SerializedName("user_id")       val userId: String,
 )
 
 /**

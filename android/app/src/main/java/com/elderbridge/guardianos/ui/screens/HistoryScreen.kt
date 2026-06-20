@@ -1,99 +1,182 @@
 package com.elderbridge.guardianos.ui.screens
 
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.elderbridge.guardianos.data.HistoryEntry
-import com.elderbridge.guardianos.data.HistoryStore
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.elderbridge.guardianos.ui.state.HistoryEventUiModel
+import com.elderbridge.guardianos.ui.state.HistoryFilter
+import com.elderbridge.guardianos.ui.state.HistoryStats
+import com.elderbridge.guardianos.ui.viewmodel.HistoryViewModel
+import com.elderbridge.guardianos.ui.theme.*
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HistoryScreen(onBack: () -> Unit) {
-    val entries = remember { HistoryStore.getEntries() }
+fun HistoryScreen(
+    onBack: () -> Unit,
+    onTryDemo: () -> Unit = {},
+    vm: HistoryViewModel = viewModel()
+) {
+    val state by vm.uiState.collectAsState()
+    val focusManager = LocalFocusManager.current
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.primary)
-                .padding(horizontal = 16.dp, vertical = 20.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onBack) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { 
                     Text(
-                        text = "← Back",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onPrimary
+                        text = "Activity Log", 
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    ) 
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack, modifier = Modifier.size(56.dp)) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack, 
+                            contentDescription = "Back",
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = SurfaceLight,
+                    titleContentColor = TextPrimary,
+                    navigationIconContentColor = ElderBlue
+                )
+            )
+        },
+        containerColor = BackgroundLight
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            // SEARCH & FILTER HEADER
+            Surface(
+                color = SurfaceLight,
+                shadowElevation = 2.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp)) {
+                    // Modern Search Bar
+                    OutlinedTextField(
+                        value = state.searchQuery,
+                        onValueChange = { vm.onSearchQueryChanged(it) },
+                        placeholder = { Text("Search logs...", color = TextSecondary) },
+                        modifier = Modifier.fillMaxWidth(),
+                        leadingIcon = { 
+                            Icon(Icons.Default.Search, "Search", tint = ElderBlue, modifier = Modifier.size(24.dp)) 
+                        },
+                        trailingIcon = {
+                            if (state.searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { vm.onSearchQueryChanged("") }) {
+                                    Icon(Icons.Default.Close, "Clear", tint = TextSecondary)
+                                }
+                            }
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = ElderBlue,
+                            unfocusedBorderColor = Divider,
+                            focusedContainerColor = BackgroundLight,
+                            unfocusedContainerColor = BackgroundLight
+                        ),
+                        shape = RoundedCornerShape(16.dp),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
+                        singleLine = true
                     )
-                }
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "Response History",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-        }
 
-        if (entries.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "No history yet.\nUse the assistant to see responses here.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Premium Filter Chips
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        HistoryFilter.entries.forEach { filter ->
+                            val isSelected = state.currentFilter == filter
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { vm.onFilterChanged(filter) },
+                                label = { 
+                                    Text(
+                                        text = filter.name.replace("_", " ").lowercase().replaceFirstChar { it.uppercase() }, 
+                                        style = MaterialTheme.typography.labelLarge
+                                    ) 
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = ElderBlue,
+                                    selectedLabelColor = Color.White,
+                                    containerColor = SurfaceLight,
+                                    labelColor = TextSecondary
+                                ),
+                                border = if (isSelected) null else FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    borderColor = Divider,
+                                    selected = false
+                                ),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                        }
+                    }
+                }
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(entries, key = { it.id }) { entry ->
-                    HistoryEntryCard(entry)
+
+            // CONTENT
+            Box(modifier = Modifier.fillMaxSize()) {
+                if (state.isLoading) {
+                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center), color = ElderBlue)
+                } else if (state.items.isEmpty()) {
+                    EmptyHistoryState(onTryDemo)
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(24.dp),
+                        verticalArrangement = Arrangement.spacedBy(20.dp)
+                    ) {
+                        item {
+                            SummaryStatsSection(state.stats)
+                        }
+
+                        itemsIndexed(state.items, key = { _, item -> item.id }) { index, item ->
+                            HistoryLogItem(
+                                item = item,
+                                index = index,
+                                onToggleExpand = { vm.toggleItemExpansion(item.id) }
+                            )
+                        }
+                        
+                        item { Spacer(modifier = Modifier.height(40.dp)) }
+                    }
                 }
             }
         }
@@ -101,69 +184,129 @@ fun HistoryScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun HistoryEntryCard(entry: HistoryEntry) {
-    var expanded by remember { mutableStateOf(false) }
-    val isLong = entry.response.length > 100
-    val hasScreen = entry.screenText.isNotBlank()
+private fun SummaryStatsSection(stats: HistoryStats) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceLight),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = CardDefaults.outlinedCardBorder()
+    ) {
+        Row(
+            modifier = Modifier.padding(20.dp).fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            StatBox("Total", stats.totalScans.toString(), ElderBlue)
+            VerticalDivider(modifier = Modifier.height(40.dp), thickness = 1.dp, color = Divider)
+            StatBox("Safe", stats.safeCount.toString(), ActiveGreen)
+            VerticalDivider(modifier = Modifier.height(40.dp), thickness = 1.dp, color = Divider)
+            StatBox("Alerts", stats.scamCount.toString(), ErrorRed)
+        }
+    }
+}
+
+@Composable
+private fun StatBox(label: String, value: String, color: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = color)
+        Text(label, style = MaterialTheme.typography.labelMedium, color = TextSecondary)
+    }
+}
+
+@Composable
+private fun HistoryLogItem(
+    item: HistoryEventUiModel,
+    index: Int,
+    onToggleExpand: () -> Unit
+) {
+    val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (isPressed) 0.98f else 1f, label = "press")
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { expanded = !expanded },
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            .scale(scale)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onToggleExpand
+            )
+            .animateContentSize(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (item.isExpanded) SurfaceLight else SurfaceLight.copy(alpha = 0.7f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (item.isExpanded) 4.dp else 0.dp),
+        border = if (!item.isExpanded) CardDefaults.outlinedCardBorder() else null
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(20.dp)) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    text = formatTimestamp(entry.timestamp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                RiskBadge(riskLevel = entry.riskLevel)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(10.dp).background(item.riskColor, CircleShape))
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(text = item.relativeTime, style = MaterialTheme.typography.labelMedium, color = TextSecondary)
+                }
+                
+                Surface(
+                    color = item.riskColor.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = item.riskLabel,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = item.riskColor
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = if (expanded) entry.response
-                       else if (isLong) entry.response.take(100) + "…"
-                       else entry.response,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface
+                text = if (item.isExpanded) item.response else item.response.take(100) + "...",
+                style = MaterialTheme.typography.bodyLarge,
+                color = TextPrimary,
+                lineHeight = 26.sp
             )
 
-            if (expanded && hasScreen) {
-                Spacer(modifier = Modifier.height(10.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    text = "Screen text",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = if (entry.screenText.length > 200)
-                               entry.screenText.take(200) + "…"
-                           else entry.screenText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            if (item.isExpanded) {
+                Spacer(modifier = Modifier.height(20.dp))
+                
+                Surface(
+                    color = BackgroundLight,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("Captured Text", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = ElderBlue)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(text = item.screenText, style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                    }
+                }
             }
 
-            if (isLong || hasScreen) {
-                Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = if (item.isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null,
+                    tint = ElderBlue,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = if (expanded) "Show less ▲" else "Show more ▼",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
+                    text = if (item.isExpanded) "Show Less" else "View Full Analysis",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = ElderBlue,
+                    fontWeight = FontWeight.Bold
                 )
             }
         }
@@ -171,30 +314,38 @@ private fun HistoryEntryCard(entry: HistoryEntry) {
 }
 
 @Composable
-private fun RiskBadge(riskLevel: String) {
-    val (bgColor, label) = when (riskLevel.lowercase()) {
-        "stop_and_verify" -> Color(0xFFB71C1C) to "Stop & Verify"
-        "caution"         -> Color(0xFFF57F17) to "Caution"
-        else              -> Color(0xFF2E7D32) to "OK"
-    }
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(bgColor)
-            .padding(horizontal = 8.dp, vertical = 3.dp)
+private fun EmptyHistoryState(onTryDemo: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(40.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
+        Surface(
+            modifier = Modifier.size(120.dp),
+            color = ElderBlueLight,
+            shape = CircleShape
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.History, null, tint = ElderBlue, modifier = Modifier.size(64.dp))
+            }
+        }
+        Spacer(modifier = Modifier.height(32.dp))
+        Text("No activity yet", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.White,
-            fontWeight = FontWeight.Bold
+            "Your protection logs will appear here.",
+            style = MaterialTheme.typography.bodyLarge,
+            color = TextSecondary,
+            textAlign = TextAlign.Center
         )
+        Spacer(modifier = Modifier.height(32.dp))
+        Button(
+            onClick = onTryDemo,
+            modifier = Modifier.fillMaxWidth().height(64.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = ElderBlue)
+        ) {
+            Text("Try Interactive Demo")
+        }
     }
 }
 
-private fun formatTimestamp(iso: String): String = runCatching {
-    DateTimeFormatter
-        .ofPattern("MMM d, h:mm a")
-        .withZone(ZoneId.systemDefault())
-        .format(Instant.parse(iso))
-}.getOrDefault(iso)

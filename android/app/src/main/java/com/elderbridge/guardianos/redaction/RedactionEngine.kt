@@ -10,7 +10,7 @@ object RedactionEngine {
     // Matches common North American phone formats:
     //   (555) 867-5309  |  555-867-5309  |  555.867.5309  |  +1 555 867 5309  |  5558675309
     private val PHONE_REGEX = Regex(
-        """(\+?1[\s.\-]?)?(\(?\d{3}\)?[\s.\-]?)\d{3}[\s.\-]\d{4}"""
+        """(\+?1[\s.\-]?)?(\(?\d{3}\)?[\s.\-]?)\d{3}[\s.\-]\d{4}""",
     )
 
     // Matches standard email addresses
