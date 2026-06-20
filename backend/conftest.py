@@ -49,6 +49,8 @@ _OFFLINE_CHAT_RESPONSE = (
 @pytest.fixture(autouse=True)
 def _stub_llm_offline():
     """Patch LLM calls in all agents for offline testing."""
+    from middleware.security_middleware import _rate_counters
+    _rate_counters.clear()
     with patch("agents.benefits_agent.call_llm", return_value=_OFFLINE_LLM_RESPONSE), \
          patch("agents.benefits_agent.call_llm_race", return_value=_OFFLINE_LLM_RESPONSE), \
          patch("agents.form_agent.call_llm", return_value=_OFFLINE_FORM_RESPONSE), \

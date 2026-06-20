@@ -48,6 +48,25 @@ _RISK_RANK: dict[RiskLevel, int] = {
     RiskLevel.CONTACT_TRUSTED_PERSON: 6,
 }
 
+# ---------------------------------------------------------------------------
+# Safe financial app recognition — suppress false-positive keyword triggers
+# for legitimate banking and payment apps where words like "password" and
+# "send money" are normal UI labels, not scam signals.
+# ---------------------------------------------------------------------------
+_SAFE_FINANCIAL_APPS = [
+    "com.hbl.", "pk.com.telenor.phoenix", "com.jazzcash", "com.mobilink",
+    "com.mcb.", "com.ubl.", "com.standardchartered.", "com.faysal.",
+    "com.askari.", "com.alfalah.", "com.meezanbank.", "com.bankislami.",
+    "pk.com.ubldigital", "com.js.bank", "com.nayapay.", "com.sadapay.",
+    "com.meezan.bank", "com.ubldigital.umobile", "com.faysal.bank",
+    "com.bankalfalah.mobile", "com.mcb.mcbmobilebanking", "com.abl.digitalabl",
+    "com.jazzcash.android", "com.daraz.android", "com.rocket.food",
+]
+
+_SAFE_APP_SKIP_KEYWORDS = {
+    "password", "otp", "[redacted_otp]", "transfer", "send money",
+}
+
 # Baseline risk by event category.
 # FORM_SCREEN and DOCUMENT start at NONE — they are help requests, not threats.
 _EVENT_BASE_RISK: dict[EventType, RiskLevel] = {
@@ -186,11 +205,21 @@ def _compute_baseline(event: IncomingEvent) -> tuple[RiskLevel, str, list[str]]:
 
     Uses keyword escalation over the event's redacted_text.  This is the
     backbone decision layer until specialist agents produce LLM outputs.
+
+    Known legitimate financial apps (banking, Easypaisa, JazzCash) bypass
+    certain keyword triggers like "password" and "send money" which are
+    normal UI labels in those apps.
     """
     current = _EVENT_BASE_RISK.get(event.event_type, RiskLevel.SOFT_HELP)
     text_lower = event.redacted_text.lower()
 
+    is_safe_app = any(
+        pkg in event.source_app.lower() for pkg in _SAFE_FINANCIAL_APPS
+    )
+
     for keyword, level in _KEYWORD_RULES:
+        if is_safe_app and keyword in _SAFE_APP_SKIP_KEYWORDS:
+            continue
         if keyword in text_lower and _RISK_RANK[level] > _RISK_RANK[current]:
             current = level
 

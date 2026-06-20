@@ -69,6 +69,30 @@ _LOW_SIGNAL_APPS = [
     "filemanager", "deskclock", "calculator", "wallpaper",
 ]
 
+_MEDIA_APPS = [
+    "youtube", "netflix", "spotify", "tiktok", "dailymotion",
+    "vlc", "mx.player", "video", "music", "gallery", "photos",
+    "camera", "instagram.android",
+    "com.facebook.katana", "com.twitter.android", "com.tiktok.android",
+    "com.google.android.apps.maps", "com.weather.app",
+    "com.google.android.apps.photos",
+]
+
+_BANKING_APPS = [
+    "com.hbl.", "pk.com.telenor.phoenix", "com.jazzcash", "com.mobilink",
+    "com.mcb.", "com.ubl.", "com.standardchartered.", "com.faysal.",
+    "com.askari.", "com.alfalah.", "com.meezanbank.", "com.bankislami.",
+    "pk.com.ubldigital", "com.js.bank", "com.nayapay.", "com.sadapay.",
+    "com.meezan.bank", "com.ubldigital.umobile", "com.faysal.bank",
+    "com.bankalfalah.mobile", "com.mcb.mcbmobilebanking", "com.abl.digitalabl",
+    "com.jazzcash.android",
+]
+
+_FINANCIAL_TRANSACTION_APPS = [
+    "pk.com.telenor.phoenix", "com.jazzcash", "com.mobilink",
+    "com.nayapay.", "com.sadapay.",
+]
+
 _ACTIONABLE_CONTENT = [
     "form", "apply", "enter", "submit", "payment", "transfer",
     "otp", "password", "benefit", "pension", "message", "notice",
@@ -103,7 +127,43 @@ def _is_low_signal(text: str, source_app: str) -> bool:
         if not any(a in text_lower for a in _ACTIONABLE_CONTENT):
             return True
 
+    if any(app in source_lower for app in _MEDIA_APPS):
+        if not any(a in text_lower for a in _ACTIONABLE_CONTENT):
+            return True
+
     return False
+
+
+def classify_context(event: IncomingEvent) -> str:
+    """Classify the screen into a context type for agent routing decisions.
+
+    Returns one of: banking_app, government_form, media_content,
+    financial_transaction, legitimate_message, low_signal, or default.
+    """
+    source_lower = event.source_app.lower()
+    text_lower = event.redacted_text.lower()
+
+    if _is_low_signal(event.redacted_text, event.source_app):
+        return "low_signal"
+
+    if any(app in source_lower for app in _MEDIA_APPS):
+        return "media_content"
+
+    if any(pkg in source_lower for pkg in _BANKING_APPS):
+        return "banking_app"
+
+    if any(pkg in source_lower for pkg in _FINANCIAL_TRANSACTION_APPS):
+        if any(w in text_lower for w in ["send", "transfer", "pay", "amount"]):
+            return "financial_transaction"
+        return "banking_app"
+
+    if ".gov." in text_lower or any(w in text_lower for w in ["nadra", "bisp", "ehsaas", "government"]):
+        return "government_form"
+
+    if event.event_type in (EventType.SMS, EventType.NOTIFICATION):
+        return "legitimate_message"
+
+    return "default"
 
 
 class RouterAgent:

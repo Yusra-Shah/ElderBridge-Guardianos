@@ -78,6 +78,12 @@ SCAM_FLAG_SIGNALS: list[str] = [
     r"expires?\s+in\s+\d+\s*hours?",
     # Click-to-claim with urgency
     r"click\s+here\s+to\s+claim",
+    # Prize / lottery scams
+    r"(lucky\s+draw|lottery).{0,80}(call|contact|claim|prize)",
+    r"(won|selected|chosen).{0,30}(grand\s+)?(prize|reward)",
+    r"(call|contact).{0,40}(claim|collect).{0,20}(prize|reward)",
+    r"processing\s+fee.{0,30}(rs|pkr|rupee)",
+    r"(prize|reward).{0,40}(call|contact).{0,20}\d",
 ]
 
 # ---------------------------------------------------------------------------
@@ -109,6 +115,54 @@ _SAFE_NEXT_STEPS = [
     "Call the official helpline using a number you already trust.",
     "Contact your trusted family member or caregiver.",
 ]
+
+# ---------------------------------------------------------------------------
+# Scam-type-specific response texts — names the scam type in the first sentence
+# ---------------------------------------------------------------------------
+_SCAM_RESPONSES: dict[str, str] = {
+    "lottery_scam": (
+        "Fake lottery scam. No real company gives away prizes and then asks "
+        "you to pay a fee or call a number to collect. Jazz, Telenor, and "
+        "other companies never contact winners this way. Do not call the "
+        "number and do not pay any processing fee. Delete this message."
+    ),
+    "prize_registration_scam": (
+        "Fake prize or job scam. Legitimate internships and jobs never ask "
+        "you to pay a registration fee first. Real prizes do not require "
+        "upfront payment. Do not pay anything and do not register through "
+        "this link. Delete this message."
+    ),
+    "otp_scam": (
+        "Please stop and do not continue. This is asking for a security "
+        "code or password. Official agencies and banks never ask for these "
+        "by message. Do not share any code. Contact the official agency "
+        "using a number you already know."
+    ),
+    "generic_scam": (
+        "Please stop and do not continue. This message contains suspicious "
+        "content that may be trying to trick you. Do not share any personal "
+        "information. Contact your trusted family member or call the official "
+        "helpline before taking any action."
+    ),
+}
+
+
+def _classify_scam_type(text: str) -> str:
+    """Identify the specific scam type for a targeted response."""
+    text_lower = text.lower()
+    if any(w in text_lower for w in ["shortlisted", "registration"]) and any(
+        w in text_lower for w in ["prize", "cash prize", "internship", "reward"]
+    ):
+        return "prize_registration_scam"
+    if any(w in text_lower for w in ["lucky draw", "lottery", "won", "winner"]):
+        return "lottery_scam"
+    if any(w in text_lower for w in ["prize", "congratulations"]) and any(
+        w in text_lower for w in ["fee", "registration", "pay"]
+    ):
+        return "prize_registration_scam"
+    if any(w in text_lower for w in ["otp", "pin", "password", "security code"]):
+        return "otp_scam"
+    return "generic_scam"
 
 
 class GuardrailAgent:
@@ -218,3 +272,8 @@ class GuardrailAgent:
     def caution_next_steps(self) -> list[str]:
         """Kept for interface compatibility; CAUTION path removed in this revision."""
         return []
+
+    def get_scam_response(self, text: str) -> str:
+        """Return a scam-type-specific response that names the scam in the first sentence."""
+        scam_type = _classify_scam_type(text)
+        return _SCAM_RESPONSES.get(scam_type, _SCAM_RESPONSES["generic_scam"])

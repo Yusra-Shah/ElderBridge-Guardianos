@@ -44,6 +44,11 @@ _SYSTEM_PROMPT = (
     "to upload it. Never suggest CamScanner for emails, messages, web pages, or forms "
     "that are already digital. If no tool fits the situation, do not mention any tool "
     "at all. Recommending an irrelevant tool is worse than recommending nothing.\n"
+    "ANTI-HALLUCINATION: Only describe what is explicitly visible in the screen text "
+    "provided. Never invent, assume, or mention information not present in the text. "
+    "Never mention OTP unless the word OTP or one-time password appears explicitly "
+    "in the screen text. Never tell the user to share, upload, or take a photo. "
+    "ElderBridge has no camera or image input.\n"
     "End with one practical Step.\n"
 )
 
