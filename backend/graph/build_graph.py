@@ -182,12 +182,14 @@ class CompiledGraph:
     def __init__(self, graph: PipelineGraph) -> None:
         self._g = graph
 
-    def invoke(self, state: PipelineState) -> PipelineState:
+    def invoke(self, state: PipelineState, partial_store: dict | None = None) -> PipelineState:
         """
         Execute all nodes in topological order, following edges and conditionals.
 
         Args:
-            state: Initial PipelineState (created by make_initial_state()).
+            state:         Initial PipelineState (created by make_initial_state()).
+            partial_store: Optional dict to store intermediate state for
+                           partial-result recovery on timeout.
 
         Returns:
             Final PipelineState with final_decision populated.
@@ -204,6 +206,9 @@ class CompiledGraph:
             logger.info("[ElderBridge Graph] ── %s", current)
             state = node_fn(state)
 
+            if partial_store is not None:
+                partial_store["state"] = state
+
             # Resolve the next node
             if current in self._g._conditional:
                 routing_fn, edge_map = self._g._conditional[current]
@@ -219,6 +224,8 @@ class CompiledGraph:
                             continue
                         logger.info("[ElderBridge Graph]   ╰─ %s (fan-out)", fan_node)
                         state = self._g._nodes[fan_node](state)
+                        if partial_store is not None:
+                            partial_store["state"] = state
                 else:
                     logger.info("[ElderBridge Graph]   (no specialist agents routed)")
 
@@ -324,7 +331,7 @@ def build_pipeline_graph() -> CompiledGraph:
 _graph: CompiledGraph = build_pipeline_graph()
 
 
-def run_graph(event: IncomingEvent) -> FinalDecision:
+def run_graph(event: IncomingEvent, partial_store: dict | None = None) -> FinalDecision:
     """
     Public entry point: run the full agent pipeline for one event.
 
@@ -332,7 +339,8 @@ def run_graph(event: IncomingEvent) -> FinalDecision:
     the FinalDecision assembled by node_guardrail.
 
     Args:
-        event: Validated, redacted IncomingEvent from the API layer.
+        event:         Validated, redacted IncomingEvent from the API layer.
+        partial_store: Optional dict for intermediate state (partial-result recovery).
 
     Returns:
         FinalDecision — safe to deliver to the Android client.
@@ -342,7 +350,7 @@ def run_graph(event: IncomingEvent) -> FinalDecision:
                       (indicates a graph wiring bug).
     """
     initial_state = make_initial_state(event)
-    final_state = _graph.invoke(initial_state)
+    final_state = _graph.invoke(initial_state, partial_store=partial_store)
 
     decision = final_state.get("final_decision")
     if decision is None:

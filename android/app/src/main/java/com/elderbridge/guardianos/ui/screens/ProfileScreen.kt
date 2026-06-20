@@ -23,10 +23,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -46,7 +42,6 @@ import com.elderbridge.guardianos.data.UserProfileStore
 import com.google.android.gms.location.LocationServices
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(onBack: () -> Unit) {
     val context = LocalContext.current
@@ -56,11 +51,7 @@ fun ProfileScreen(onBack: () -> Unit) {
     var location by remember { mutableStateOf(saved.location) }
     var emergencyContact by remember { mutableStateOf(saved.emergencyContact) }
     var caregiverContact by remember { mutableStateOf(saved.caregiverContact) }
-    var preferredLanguage by remember { mutableStateOf(saved.preferredLanguage) }
-    var languageExpanded by remember { mutableStateOf(false) }
     var isLocating by remember { mutableStateOf(false) }
-
-    val languages = listOf("English", "Urdu")
 
     // Geocode on a background thread and post result back to main
     fun fetchLocation() {
@@ -179,36 +170,6 @@ fun ProfileScreen(onBack: () -> Unit) {
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
         )
 
-        ExposedDropdownMenuBox(
-            expanded = languageExpanded,
-            onExpandedChange = { languageExpanded = !languageExpanded }
-        ) {
-            OutlinedTextField(
-                value = preferredLanguage,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("Preferred Language") },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = languageExpanded) },
-                modifier = Modifier
-                    .menuAnchor()
-                    .fillMaxWidth()
-            )
-            ExposedDropdownMenu(
-                expanded = languageExpanded,
-                onDismissRequest = { languageExpanded = false }
-            ) {
-                languages.forEach { lang ->
-                    DropdownMenuItem(
-                        text = { Text(lang) },
-                        onClick = {
-                            preferredLanguage = lang
-                            languageExpanded = false
-                        }
-                    )
-                }
-            }
-        }
-
         Spacer(modifier = Modifier.height(8.dp))
 
         Button(
@@ -219,8 +180,7 @@ fun ProfileScreen(onBack: () -> Unit) {
                         fullName = fullName.trim(),
                         location = location.trim(),
                         emergencyContact = emergencyContact.trim(),
-                        caregiverContact = caregiverContact.trim(),
-                        preferredLanguage = preferredLanguage
+                        caregiverContact = caregiverContact.trim()
                     )
                 )
                 Toast.makeText(context, "Profile saved", Toast.LENGTH_SHORT).show()

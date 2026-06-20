@@ -30,17 +30,12 @@ class SecurePIIFilter(logging.Filter):
         return True
 
 def setup_secure_logging(level: int = logging.INFO) -> None:
-    root_logger = logging.getLogger()
-    root_logger.setLevel(level)
-    for handler in root_logger.handlers[:]:
-        handler.addFilter(SecurePIIFilter())
-    if not root_logger.handlers:
+    eb_logger = logging.getLogger("elderbridge")
+    eb_logger.setLevel(level)
+    eb_logger.propagate = False
+    if not eb_logger.handlers:
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
         handler.addFilter(SecurePIIFilter())
-        root_logger.addHandler(handler)
-    for logger_name in ["uvicorn", "uvicorn.access", "uvicorn.error", "fastapi"]:
-        lgr = logging.getLogger(logger_name)
-        for handler in lgr.handlers:
-            handler.addFilter(SecurePIIFilter())
-    logging.info("[SECURITY] Secure logging initialised — PII filter active")
+        eb_logger.addHandler(handler)
+    eb_logger.info("[SECURITY] Secure logging initialised — PII filter active")
