@@ -220,6 +220,9 @@ def node_guardrail(state: PipelineState) -> PipelineState:
 
     guardrail_resp = _guardrail.run(event, draft)
 
+    from agents.output_filter import filter_output
+    draft = filter_output(draft)
+
     if guardrail_resp.output_text:
         # HARD BLOCK — AI output is directly dangerous; replace with safe text.
         logger.debug("node_guardrail | result=HARD_BLOCK")

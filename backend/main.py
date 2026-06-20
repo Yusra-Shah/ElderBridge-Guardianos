@@ -51,8 +51,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from graph.build_graph import run_graph
-from schemas.decision_schema import FinalDecision
+from schemas.decision_schema import FinalDecision, RiskLevel
 from schemas.event_schema import IncomingEvent
+from secure_logging.secure_logger import setup_secure_logging
 
 logger = logging.getLogger("elderbridge")
 
@@ -82,6 +83,8 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+setup_secure_logging()
 
 # ---------------------------------------------------------------------------
 # CORS — local dev / demo only
@@ -143,7 +146,7 @@ async def health_check() -> dict:
         "Plain-language guidance, risk level, next steps, and source citations."
     ),
 )
-async def analyze_event(event: IncomingEvent) -> FinalDecision:
+async def analyze_event(event: IncomingEvent, request: Request) -> FinalDecision:
     """
     Main decision endpoint called by the ElderBridge Android client.
 
@@ -157,6 +160,18 @@ async def analyze_event(event: IncomingEvent) -> FinalDecision:
     Returns a FinalDecision with a risk_flag, plain-language response_text,
     and ordered next_steps.
     """
+    from middleware.security_middleware import check_rate_limit, validate_replay_protection, get_client_ip
+    from agents.injection_detector import detect_injection, INJECTION_BLOCK_RESPONSE
+    client_ip = get_client_ip(request)
+    check_rate_limit(client_ip, "analyze-event")
+    if detect_injection(event.redacted_text):
+        return FinalDecision(
+            response_text=INJECTION_BLOCK_RESPONSE,
+            risk_flag=RiskLevel.STOP_AND_VERIFY,
+            next_steps=["Do not interact with this screen.", "Close it immediately."],
+            source_citations=[],
+        )
+
     if not event.redacted_text.strip():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

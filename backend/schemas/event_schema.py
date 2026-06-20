@@ -40,6 +40,15 @@ class IncomingEvent(BaseModel):
         description="ISO-8601 UTC timestamp of when the event was captured on-device.",
     )
 
+    @field_validator("redacted_text")
+    @classmethod
+    def no_residual_sensitive(cls, v: str) -> str:
+        import re
+        residual = re.compile(r'(?i)(otp|pin|code)\s*[:\-]?\s*\d{4,8}|\d{5}-\d{7}-\d')
+        if residual.search(v):
+            raise ValueError('Redaction incomplete: sensitive pattern detected in event text')
+        return v
+
     @field_validator("timestamp", mode="before")
     @classmethod
     def parse_timestamp(cls, v: object) -> datetime:
