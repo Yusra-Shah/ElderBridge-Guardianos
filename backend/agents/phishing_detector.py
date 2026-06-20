@@ -17,14 +17,25 @@ _BROWSERS = ["chrome", "firefox", "brave", "opera", "edge", "browser", "webview"
 _OFFICIAL_DOMAINS: dict[str, list[str]] = {
     "nadra":         ["nadra.gov.pk"],
     "bisp":          ["bisp.gov.pk"],
-    "ehsaas":        ["ehsaas.gov.pk", "pass.gov.pk"],
-    "fbr":           ["fbr.gov.pk"],
-    "pakistan post":  ["ep.gov.pk"],
-    "sindh":         ["sindh.gov.pk", "swd.sindh.gov.pk"],
+    "ehsaas":        ["ehsaas.gov.pk", "pass.gov.pk", "8171.pass.gov.pk"],
+    "fbr":           ["fbr.gov.pk", "iris.fbr.gov.pk"],
+    "pakistan post":  ["ep.gov.pk", "pakpost.gov.pk"],
+    "sindh":         ["sindh.gov.pk", "swd.sindh.gov.pk", "gos.pk"],
     "punjab":        ["punjab.gov.pk"],
     "kp":            ["kp.gov.pk"],
     "balochistan":   ["balochistan.gov.pk"],
+    "sbp":           ["sbp.org.pk"],
+    "state bank":    ["sbp.org.pk"],
+    "secp":          ["secp.gov.pk"],
+    "pta":           ["pta.gov.pk"],
+    "pemra":         ["pemra.gov.pk"],
+    "jazz":          ["jazz.com.pk"],
+    "telenor":       ["telenor.com.pk"],
+    "ufone":         ["ufone.com"],
+    "zong":          ["zong.com.pk"],
 }
+
+_EMAIL_RE = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
 
 _DOMAIN_RE = re.compile(
     r'(?:https?://)?([a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)+)',
@@ -55,7 +66,16 @@ def detect_phishing(text: str, source_app: str) -> bool:
         return False
 
     text_lower = text.lower()
-    domains_found = [m.group(1).lower() for m in _DOMAIN_RE.finditer(text)]
+
+    email_positions = set()
+    for m in _EMAIL_RE.finditer(text):
+        email_positions.add(m.start())
+    domains_found = []
+    for m in _DOMAIN_RE.finditer(text):
+        at_pos = text.rfind("@", max(0, m.start() - 50), m.start())
+        if at_pos >= 0 and m.start() - at_pos < 50:
+            continue
+        domains_found.append(m.group(1).lower())
 
     if not domains_found:
         return False

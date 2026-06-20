@@ -62,6 +62,10 @@ class PipelineState(TypedDict, total=False):
     risk_flag: RiskLevel                # NONE … CONTACT_TRUSTED_PERSON
     next_steps: list[str]
 
+    # ── Context classification (written by node_router) ─────────────────
+    context_type: str                   # banking_app, government_form, etc.
+    extracted_signals: dict             # structured signals from baseline
+
     # ── Critic output (for logging + test introspection) ──────────────────
     last_critic_response: AgentResponse | None
 
@@ -84,6 +88,8 @@ def make_initial_state(event: IncomingEvent) -> PipelineState:
         "draft_response": "",
         "risk_flag": RiskLevel.NONE,
         "next_steps": [],
+        "context_type": "default",
+        "extracted_signals": {},
         "last_critic_response": None,
         "final_decision": None,
     }

@@ -61,6 +61,72 @@ _URGENCY_SIGNALS = [
     re.compile(r"limited\s+(time|spots?|offer)", re.IGNORECASE),
 ]
 
+_PRIZE_LOTTERY_SIGNALS = [
+    re.compile(r"lucky\s+draw", re.IGNORECASE),
+    re.compile(r"selected\s+winner", re.IGNORECASE),
+    re.compile(r"claim\s+your\s+prize", re.IGNORECASE),
+    re.compile(r"prize\s+distribution", re.IGNORECASE),
+    re.compile(r"call\s+within\s+\d+\s*hours?\s+to\s+claim", re.IGNORECASE),
+    re.compile(r"reference\s+number\s+jld", re.IGNORECASE),
+]
+
+_BANKING_IMPERSONATION = [
+    re.compile(r"your\s+account\s+will\s+be\s+blocked", re.IGNORECASE),
+    re.compile(r"verify\s+your\s+account", re.IGNORECASE),
+    re.compile(r"unusual\s+activity\s+detected\s+on\s+your\s+account", re.IGNORECASE),
+]
+
+_BANKING_ACTION = [
+    re.compile(r"click\s+here", re.IGNORECASE),
+    re.compile(r"call\s+now", re.IGNORECASE),
+    re.compile(r"share\s+(your\s+)?otp", re.IGNORECASE),
+]
+
+_JOB_SCAM_SIGNALS = [
+    re.compile(r"work\s+from\s+home\s+earn\s+daily", re.IGNORECASE),
+    re.compile(r"online\s+typing\s+job", re.IGNORECASE),
+    re.compile(r"data\s+entry\s+job\s+earn\s+per\s+hour", re.IGNORECASE),
+]
+
+_JOB_SCAM_FEE = [
+    re.compile(r"advance\s+fee", re.IGNORECASE),
+    re.compile(r"registration\s+fee", re.IGNORECASE),
+    re.compile(r"security\s+deposit\s+required\s+first", re.IGNORECASE),
+]
+
+_PRIZE_REGISTRATION_SIGNALS = [
+    re.compile(r"shortlisted\s+(for\s+)?(prize|reward|cash|internship)", re.IGNORECASE),
+    re.compile(r"selected\s+(for\s+)?(reward|cash\s+prize|internship)", re.IGNORECASE),
+    re.compile(r"cash\s+prize", re.IGNORECASE),
+    re.compile(r"prize\s+and\s+internship", re.IGNORECASE),
+    re.compile(r"you\s+(have\s+been|are)\s+(selected|shortlisted|chosen)", re.IGNORECASE),
+    re.compile(r"congratulations\s+you\s+(are|have)", re.IGNORECASE),
+]
+
+_REGISTRATION_FEE_SIGNALS = [
+    re.compile(r"(one|1)\s*time\s+registration", re.IGNORECASE),
+    re.compile(r"registration\s+fee", re.IGNORECASE),
+    re.compile(r"pay\s+to\s+register", re.IGNORECASE),
+    re.compile(r"advance\s+(fee|payment)", re.IGNORECASE),
+    re.compile(r"security\s+deposit", re.IGNORECASE),
+]
+
+_FAKE_OPPORTUNITY_SIGNALS = [
+    re.compile(r"earn\s+from\s+home", re.IGNORECASE),
+    re.compile(r"online\s+earning", re.IGNORECASE),
+    re.compile(r"typing\s+job", re.IGNORECASE),
+    re.compile(r"data\s+entry\s+job", re.IGNORECASE),
+    re.compile(r"work\s+from\s+home\s+earn", re.IGNORECASE),
+]
+
+_SCAM_URGENCY_SIGNALS = [
+    re.compile(r"last\s+day", re.IGNORECASE),
+    re.compile(r"final\s+call", re.IGNORECASE),
+    re.compile(r"limited\s+(time|seats?|spots?)", re.IGNORECASE),
+    re.compile(r"hurry", re.IGNORECASE),
+    re.compile(r"closing\s+soon", re.IGNORECASE),
+]
+
 
 def detect_financial_fraud(text: str) -> bool:
     """Return True if the text contains a high-confidence investment scam pattern.
@@ -92,6 +158,31 @@ def detect_financial_fraud(text: str) -> bool:
     if has_crypto and (has_referral or has_urgency):
         return True
     if has_unrealistic and (has_referral or has_link):
+        return True
+
+    has_prize = any(p.search(text) for p in _PRIZE_LOTTERY_SIGNALS)
+    has_bank_impersonation = any(p.search(text) for p in _BANKING_IMPERSONATION)
+    has_bank_action = any(p.search(text) for p in _BANKING_ACTION)
+    has_job_scam = any(p.search(text) for p in _JOB_SCAM_SIGNALS)
+    has_job_fee = any(p.search(text) for p in _JOB_SCAM_FEE)
+
+    if has_prize and has_link:
+        return True
+    if has_bank_impersonation and has_bank_action:
+        return True
+    if has_job_scam and has_job_fee:
+        return True
+
+    has_prize_reg = any(p.search(text) for p in _PRIZE_REGISTRATION_SIGNALS)
+    has_reg_fee = any(p.search(text) for p in _REGISTRATION_FEE_SIGNALS)
+    has_fake_opp = any(p.search(text) for p in _FAKE_OPPORTUNITY_SIGNALS)
+    has_scam_urgency = any(p.search(text) for p in _SCAM_URGENCY_SIGNALS)
+
+    if has_prize_reg and has_reg_fee:
+        return True
+    if has_prize_reg and has_scam_urgency and has_link:
+        return True
+    if has_fake_opp and has_reg_fee:
         return True
 
     return False

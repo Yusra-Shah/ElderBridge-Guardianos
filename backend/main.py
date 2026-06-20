@@ -53,9 +53,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from agents.chat_handler import handle_chat_question, _CHAT_FALLBACK
+from agents.emergency_scam_detector import detect_emergency_scam, EMERGENCY_SCAM_RESPONSE, EMERGENCY_SCAM_NEXT_STEPS
 from agents.form_cache import check_form_cache
 from agents.fraud_detector import detect_financial_fraud, FRAUD_BLOCK_RESPONSE, FRAUD_NEXT_STEPS
 from agents.injection_detector import detect_injection, INJECTION_BLOCK_RESPONSE
+from agents.phishing_detector import detect_phishing, PHISHING_BLOCK_RESPONSE, PHISHING_NEXT_STEPS
 from graph.build_graph import run_graph
 from middleware.security_middleware import check_rate_limit, validate_replay_protection, get_client_ip
 from schemas.decision_schema import FinalDecision, RiskLevel
@@ -134,7 +136,13 @@ def _cache_key(event: IncomingEvent) -> str:
 
 
 # Increment this on every milestone/release.
-_VERSION = "0.4.0"
+# v0.5.0 changelog:
+#   - fraud detector, form cache, chat handler, phishing detector, emergency scam detector
+#   - safe-app bypass, context classification, baseline signal extraction
+#   - tiered timeouts, partial result degradation, research non-blocking
+#   - guardrail scam-type naming, response quality enforcement
+#   - router low-signal and media content detection
+_VERSION = "0.5.0"
 
 app = FastAPI(
     title="ElderBridge GuardianOS API",
@@ -192,10 +200,20 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 @app.get("/health", tags=["infra"])
 async def health_check() -> dict:
-    """Liveness probe — returns 200 with version if the service is running."""
+    """Liveness probe — returns 200 with version and capabilities."""
     return {
         "status": "ok",
         "version": _VERSION,
+        "capabilities": [
+            "investment_fraud_detection",
+            "phishing_site_detection",
+            "emergency_scam_detection",
+            "prize_lottery_scam_detection",
+            "government_form_assistance",
+            "banking_app_safe_bypass",
+            "chat_question_answering",
+            "low_signal_filtering",
+        ],
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -240,6 +258,24 @@ async def analyze_event(event: IncomingEvent, request: Request) -> FinalDecision
                 response_text=FRAUD_BLOCK_RESPONSE,
                 risk_flag=RiskLevel.STOP_AND_VERIFY,
                 next_steps=FRAUD_NEXT_STEPS,
+                source_citations=[],
+            )
+
+        if detect_phishing(event.redacted_text, event.source_app):
+            logger.warning("analyze-event | phishing detected for user=%s", event.user_id)
+            return FinalDecision(
+                response_text=PHISHING_BLOCK_RESPONSE,
+                risk_flag=RiskLevel.STOP_AND_VERIFY,
+                next_steps=PHISHING_NEXT_STEPS,
+                source_citations=[],
+            )
+
+        if detect_emergency_scam(event.redacted_text):
+            logger.warning("analyze-event | emergency scam detected for user=%s", event.user_id)
+            return FinalDecision(
+                response_text=EMERGENCY_SCAM_RESPONSE,
+                risk_flag=RiskLevel.STOP_AND_VERIFY,
+                next_steps=EMERGENCY_SCAM_NEXT_STEPS,
                 source_citations=[],
             )
 

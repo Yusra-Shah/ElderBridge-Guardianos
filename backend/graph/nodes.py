@@ -18,15 +18,22 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 
+import re
+
 from agents.benefits_agent import BenefitsAgent
 from agents.critic_agent import CriticAgent
 from agents.form_agent import FormAgent
 from agents.guardrail_agent import GuardrailAgent
 from agents.research_agent import ResearchAgent
-from agents.router_agent import RouterAgent
+from agents.router_agent import RouterAgent, classify_context
 from graph.state import PipelineState
 from orchestrator import compute_baseline
 from schemas.decision_schema import AgentResponse, EvidenceItem, FinalDecision, RiskLevel
+
+_AMOUNT_RE = re.compile(r'(?:rs\.?|pkr\.?)\s*[\d,]+', re.IGNORECASE)
+_URL_RE = re.compile(r'https?://\S+|[a-zA-Z0-9-]+\.[a-z]{2,}(?:\.[a-z]{2,})?', re.IGNORECASE)
+_URGENCY_WORDS = {"urgent", "immediately", "expire", "suspended", "blocked", "hurry"}
+_PERSONAL_FIELDS = {"cnic", "password", "otp", "pin", "date of birth", "mother"}
 
 logger = logging.getLogger("elderbridge.graph.nodes")
 
@@ -49,42 +56,55 @@ _guardrail = GuardrailAgent()
 # Node functions
 # ---------------------------------------------------------------------------
 
+def _extract_signals(text: str) -> dict:
+    """Extract structured signals from screen text for downstream agents."""
+    text_lower = text.lower()
+    words = set(text_lower.split())
+    return {
+        "amounts": _AMOUNT_RE.findall(text),
+        "urls": _URL_RE.findall(text),
+        "urgency": sorted(words & _URGENCY_WORDS),
+        "personal_fields": sorted({f for f in _PERSONAL_FIELDS if f in text_lower}),
+    }
+
+
 def node_baseline(state: PipelineState) -> PipelineState:
     """
-    Compute the rule-based risk baseline.
+    Compute the rule-based risk baseline and extract structured signals.
 
-    Sets: draft_response, risk_flag, next_steps.
+    Sets: draft_response, risk_flag, next_steps, extracted_signals.
     Reads: event.
     """
     event = state["event"]
     risk_flag, response_text, next_steps = compute_baseline(event)
+    signals = _extract_signals(event.redacted_text)
     logger.debug(
-        "node_baseline | risk_flag=%s text_len=%d",
+        "node_baseline | risk_flag=%s text_len=%d signals=%s",
         risk_flag.value,
         len(response_text),
+        {k: v for k, v in signals.items() if v},
     )
     return {
         **state,
         "draft_response": response_text,
         "risk_flag": risk_flag,
         "next_steps": next_steps,
+        "extracted_signals": signals,
     }
 
 
 def node_router(state: PipelineState) -> PipelineState:
     """
-    Determine which specialist agents to invoke.
+    Determine which specialist agents to invoke and classify screen context.
 
-    Sets: routed_agents (list of agent name strings, e.g. ["FormAgent", "BenefitsAgent"]).
+    Sets: routed_agents, context_type.
     Reads: event.
-
-    CriticAgent and GuardrailAgent are NOT included — they are always wired
-    as fixed downstream nodes in the graph regardless of event type.
     """
     event = state["event"]
+    ctx = classify_context(event)
     routed = _router.route(event)
-    logger.debug("node_router | routed_agents=%s", routed)
-    return {**state, "routed_agents": routed}
+    logger.debug("node_router | context=%s routed_agents=%s", ctx, routed)
+    return {**state, "routed_agents": routed, "context_type": ctx}
 
 
 def node_benefits(state: PipelineState) -> PipelineState:
@@ -253,62 +273,91 @@ def node_critic(state: PipelineState) -> PipelineState:
     return {**state, "last_critic_response": critic_resp}
 
 
+_OTP_HALLUCINATION_RE = re.compile(
+    r'[^.]*\b(otp|one.time\s+password|one.time\s+code|verification\s+code)\b[^.]*\.',
+    re.IGNORECASE,
+)
+
+_PHOTO_LANGUAGE_RE = re.compile(
+    r'[^.]*\b(share|upload|send|take|attach)\s+(a\s+)?(clear\s+)?(photo|picture|screenshot|image)\b[^.]*\.?',
+    re.IGNORECASE,
+)
+
+
+def _enforce_quality(text: str, context_type: str, event_text: str = "") -> str:
+    """Enforce response quality rules on the final text."""
+    if not text:
+        return text
+    text = re.sub(r'^This\s+(screen|looks\s+like)\s+', '', text, flags=re.IGNORECASE).strip()
+    if text and text[0].islower():
+        text = text[0].upper() + text[1:]
+
+    event_lower = event_text.lower()
+    if "otp" not in event_lower and "one-time" not in event_lower and "one time" not in event_lower:
+        text = _OTP_HALLUCINATION_RE.sub('', text).strip()
+        text = re.sub(r'\s{2,}', ' ', text).strip()
+
+    text = _PHOTO_LANGUAGE_RE.sub('', text).strip()
+    text = re.sub(r'\s{2,}', ' ', text).strip()
+
+    if text and text[0].islower():
+        text = text[0].upper() + text[1:]
+
+    if context_type in ("low_signal", "media_content"):
+        words = text.split()
+        if len(words) > 20:
+            text = " ".join(words[:20]) + "."
+    else:
+        words = text.split()
+        if len(words) > 80:
+            text = " ".join(words[:80]) + "."
+    return text
+
+
 def node_guardrail(state: PipelineState) -> PipelineState:
     """
     Run the Safety Guardrail Agent — final veto before user delivery.
 
+    Context-aware: adjusts response tone and length based on context_type.
+    Scam responses name the specific scam type in the first sentence.
+
     Sets: final_decision.
-    Reads: event, draft_response, risk_flag, next_steps, evidence_items.
-
-    Three outcomes, determined by GuardrailAgent.run() return value:
-
-      HARD BLOCK (output_text non-empty, requires_human_review=True):
-        AI draft output itself contains a dangerous pattern.
-        Uses the guardrail safe-replacement text as response_text.
-        Sets STOP_AND_VERIFY and clears source_citations.
-
-      SCAM FLAG (output_text empty, requires_human_review=True):
-        Scam signal detected in incoming event text.
-        Passes the baseline draft_response through unchanged.
-        Sets STOP_AND_VERIFY and clears source_citations.
-
-      PASS (requires_human_review=False):
-        No violations. Uses baseline draft_response with the existing
-        risk_flag and next_steps computed by node_baseline.
+    Reads: event, draft_response, risk_flag, next_steps, evidence_items, context_type.
     """
     event = state["event"]
     draft = state.get("draft_response", "")
+    context_type = state.get("context_type", "default")
 
     guardrail_resp = _guardrail.run(event, draft)
 
     from agents.output_filter import filter_output
     draft = filter_output(draft)
 
+    event_text = event.redacted_text
+
     if guardrail_resp.output_text:
-        # HARD BLOCK — AI output is directly dangerous; replace with safe text.
         logger.debug("node_guardrail | result=HARD_BLOCK")
         decision = FinalDecision(
-            response_text=guardrail_resp.output_text,
+            response_text=_enforce_quality(guardrail_resp.output_text, context_type, event_text),
             risk_flag=RiskLevel.STOP_AND_VERIFY,
             next_steps=_guardrail.safe_next_steps,
             source_citations=[],
         )
 
     elif guardrail_resp.requires_human_review:
-        # SCAM FLAG — dangerous input; use baseline draft, override risk.
-        logger.debug("node_guardrail | result=SCAM_FLAG")
+        logger.debug("node_guardrail | result=SCAM_FLAG context=%s", context_type)
+        scam_response = _guardrail.get_scam_response(event_text)
         decision = FinalDecision(
-            response_text=draft,
+            response_text=_enforce_quality(scam_response, context_type, event_text),
             risk_flag=RiskLevel.STOP_AND_VERIFY,
             next_steps=_guardrail.safe_next_steps,
             source_citations=[],
         )
 
     else:
-        # PASS — no violations; use baseline draft with existing risk metadata.
-        logger.debug("node_guardrail | result=PASS")
+        logger.debug("node_guardrail | result=PASS context=%s", context_type)
         decision = FinalDecision(
-            response_text=draft,
+            response_text=_enforce_quality(draft, context_type, event_text),
             risk_flag=state.get("risk_flag", RiskLevel.SOFT_HELP),
             next_steps=state.get("next_steps", []),
             source_citations=state.get("evidence_items", []),
