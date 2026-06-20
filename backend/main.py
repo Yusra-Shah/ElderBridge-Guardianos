@@ -50,7 +50,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from agents.chat_handler import handle_chat_question, _CHAT_FALLBACK
 from agents.emergency_scam_detector import detect_emergency_scam, EMERGENCY_SCAM_RESPONSE, EMERGENCY_SCAM_NEXT_STEPS
@@ -369,31 +369,53 @@ async def get_user_profile(user_id: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Chat endpoint — lightweight follow-up questions (FIX 2)
+# Chat endpoint — multi-turn conversation with history
 # ---------------------------------------------------------------------------
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
 class ChatRequest(BaseModel):
-    user_id: str = Field(..., min_length=1, max_length=64)
-    question: str = Field(..., min_length=1, max_length=1024)
-    screen_context: str = Field(default="", max_length=2048)
+    model_config = ConfigDict(populate_by_name=True)
+
+    user_id: str = Field(
+        ...,
+        validation_alias=AliasChoices("user_id", "userId"),
+        min_length=1, max_length=64,
+    )
+    messages: list[ChatMessage] = Field(default_factory=list)
+    screen_context: str = Field(
+        default="",
+        validation_alias=AliasChoices("screen_context", "screenContext"),
+        max_length=2048,
+    )
+    question: str = Field(default="", max_length=1024)
 
 
-_CHAT_TIMEOUT = 8.0
+_CHAT_TIMEOUT = 12.0
 
 
 @app.post(
     "/ask-question",
     response_model=FinalDecision,
     tags=["chat"],
-    summary="Answer a follow-up question about the current screen.",
+    summary="Multi-turn chat: answer a question with full conversation history.",
 )
 async def ask_question(req: ChatRequest, request: Request) -> FinalDecision:
-    """Lightweight chat path: single LLM call, no full pipeline."""
+    """Multi-turn chat path with conversation history. No full pipeline."""
     try:
         client_ip = get_client_ip(request)
         check_rate_limit(client_ip, "ask-question")
 
-        if detect_injection(req.question):
+        last_user_text = req.question
+        if req.messages:
+            for m in reversed(req.messages):
+                if m.role == "user":
+                    last_user_text = m.content
+                    break
+
+        if last_user_text and detect_injection(last_user_text):
             return FinalDecision(
                 response_text=INJECTION_BLOCK_RESPONSE,
                 risk_flag=RiskLevel.STOP_AND_VERIFY,
@@ -401,13 +423,28 @@ async def ask_question(req: ChatRequest, request: Request) -> FinalDecision:
                 source_citations=[],
             )
 
-        logger.info("ask-question | user=%s", req.user_id)
+        logger.info("ask-question | user=%s msgs=%d", req.user_id, len(req.messages))
+
+        msgs: list[dict] | None = None
+        question = req.question
+
+        if req.messages:
+            msgs = [{"role": m.role, "content": m.content} for m in req.messages]
+        elif question and question.strip():
+            msgs = [{"role": "user", "content": question}]
+
+        if not msgs and not (question and question.strip()):
+            return _CHAT_FALLBACK
 
         loop = asyncio.get_running_loop()
         result = await asyncio.wait_for(
             loop.run_in_executor(
                 _pipeline_executor,
-                lambda: handle_chat_question(req.question, req.screen_context),
+                lambda: handle_chat_question(
+                    messages=msgs,
+                    screen_context=req.screen_context,
+                    question=question if not msgs else "",
+                ),
             ),
             timeout=_CHAT_TIMEOUT,
         )

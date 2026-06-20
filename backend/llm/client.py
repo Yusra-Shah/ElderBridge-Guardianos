@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 
@@ -36,6 +37,55 @@ class LLMUnavailableError(Exception):
     API-level errors.  Callers should catch this and fall back to rule-based
     responses rather than propagating the error to the user.
     """
+
+
+class ContentFilterError(LLMUnavailableError):
+    """Azure content filter blocked the request (jailbreak or content_filter).
+
+    Callers should fall back gracefully — the input text itself is harmless
+    but tripped Azure's automated filter (common with messy accessibility dumps).
+    """
+
+
+# ---------------------------------------------------------------------------
+# Text sanitization — clean messy accessibility dumps before sending to Azure
+# ---------------------------------------------------------------------------
+
+_URL_QUERY_RE = re.compile(r'(https?://\S+?)([?#]\S*)')
+_TRACKING_PARAMS_RE = re.compile(r'[?&](igsh|igshid|utm_\w+|fbclid|t|s|ref|share)=[^\s&]*', re.IGNORECASE)
+_PERCENT_ENCODED_RE = re.compile(r'%[0-9A-Fa-f]{2}')
+_UNICODE_ICON_RE = re.compile(r'[-\U000f0000-\U000ffffd⠀-⣿]')
+_CONTROL_CHARS_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
+_DUPLICATE_PHRASE_RE = re.compile(r'\b(\w[\w\s]{2,30}?)\s+\1\b', re.IGNORECASE)
+_MULTI_SPACE_RE = re.compile(r'[ \t]{2,}')
+_MULTI_NEWLINE_RE = re.compile(r'\n{3,}')
+
+
+def sanitize_for_llm(text: str) -> str:
+    """Clean raw accessibility text before sending to Azure to avoid content filter false positives.
+
+    Strips URL tracking params, percent-encoded noise, private-use unicode icons,
+    control characters, and collapses repeated duplicate phrases.
+    """
+    if not text:
+        return text
+
+    text = _CONTROL_CHARS_RE.sub('', text)
+    text = _UNICODE_ICON_RE.sub('', text)
+
+    def _strip_url_params(m: re.Match) -> str:
+        return m.group(1)
+    text = _URL_QUERY_RE.sub(_strip_url_params, text)
+
+    text = _TRACKING_PARAMS_RE.sub('', text)
+    text = _PERCENT_ENCODED_RE.sub('', text)
+
+    text = _DUPLICATE_PHRASE_RE.sub(r'\1', text)
+
+    text = _MULTI_SPACE_RE.sub(' ', text)
+    text = _MULTI_NEWLINE_RE.sub('\n\n', text)
+
+    return text.strip()
 
 
 def call_llm(
@@ -86,8 +136,10 @@ def call_llm(
     # The model name is passed in the create() call, not in the URL.
     base_url = f"{endpoint.rstrip('/')}/openai/v1"
 
+    user_message = sanitize_for_llm(user_message)
+
     try:
-        from openai import OpenAI  # deferred import so module loads without package installed
+        from openai import BadRequestError, OpenAI
 
         logger.debug(
             "LLM backend: Azure AI Foundry base_url=%s model=%s",
@@ -104,21 +156,26 @@ def call_llm(
                 {"role": "system", "content": system_prompt},
                 {"role": "user",   "content": user_message},
             ],
-            # Reasoning models (gpt-5-mini, o1, o3, …) require max_completion_tokens.
-            # Non-reasoning models also accept it, so this is safe for all deployments.
             max_completion_tokens=max_tokens,
         )
         content = response.choices[0].message.content
         if not content:
-            # Reasoning models (gpt-5-mini, o1, o3) can return empty content
-            # when max_completion_tokens is too small to fit both chain-of-thought
-            # and visible output.  Treat as unavailable so callers fall back.
             finish = response.choices[0].finish_reason
             raise LLMUnavailableError(
                 f"LLM returned empty content (finish_reason={finish!r}). "
                 "Increase max_completion_tokens or check the token budget."
             )
         return content
+    except (LLMUnavailableError, ContentFilterError):
+        raise
+    except BadRequestError as exc:
+        body = getattr(exc, "body", {}) or {}
+        code = body.get("code", "") if isinstance(body, dict) else ""
+        if "content_filter" in str(code) or "content_filter" in str(exc):
+            logger.warning("Azure content filter triggered (not a real threat): %s", exc)
+            raise ContentFilterError(f"Azure content filter: {exc}") from exc
+        logger.error("LLM BadRequestError: %s", exc, exc_info=True)
+        raise LLMUnavailableError(f"LLM call failed: {exc}") from exc
     except Exception as exc:
         logger.error("LLM call failed: %s", exc, exc_info=True)
         raise LLMUnavailableError(f"LLM call failed: {exc}") from exc
@@ -157,3 +214,76 @@ def call_llm_race(system_prompt: str, user_message: str, max_tokens: int = 4096)
             print("[RACE] Both models timed out, falling back")
 
     return call_llm(system_prompt, user_message, max_tokens)
+
+
+def call_llm_chat(messages: list[dict], max_tokens: int = 512) -> str:
+    """Call Azure OpenAI with a full multi-turn messages array.
+
+    Each dict in messages must have ``role`` ("system", "user", or "assistant")
+    and ``content`` (str).  This is the standard OpenAI chat-completions format.
+
+    Args:
+        messages:   Ordered list of conversation messages.
+        max_tokens: Token budget for the completion.
+
+    Returns:
+        The model's plain-text response string.
+
+    Raises:
+        LLMUnavailableError: On any failure.
+    """
+    api_key    = os.environ.get("AZURE_OPENAI_API_KEY",    "").strip()
+    endpoint   = os.environ.get("AZURE_OPENAI_ENDPOINT",   "").strip()
+    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT",  "").strip()
+
+    missing = [
+        name for name, val in (
+            ("AZURE_OPENAI_API_KEY",    api_key),
+            ("AZURE_OPENAI_ENDPOINT",   endpoint),
+            ("AZURE_OPENAI_DEPLOYMENT", deployment),
+        )
+        if not val
+    ]
+    if missing:
+        raise LLMUnavailableError(
+            f"Missing required environment variable(s): {', '.join(missing)}."
+        )
+
+    base_url = f"{endpoint.rstrip('/')}/openai/v1"
+
+    sanitized = []
+    for m in messages:
+        sanitized.append({
+            "role": m["role"],
+            "content": sanitize_for_llm(m["content"]) if m.get("content") else "",
+        })
+
+    try:
+        from openai import BadRequestError, OpenAI
+
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        response = client.chat.completions.create(
+            model=deployment,
+            messages=sanitized,
+            max_completion_tokens=max_tokens,
+        )
+        content = response.choices[0].message.content
+        if not content:
+            finish = response.choices[0].finish_reason
+            raise LLMUnavailableError(
+                f"LLM returned empty content (finish_reason={finish!r})."
+            )
+        return content
+    except (LLMUnavailableError, ContentFilterError):
+        raise
+    except BadRequestError as exc:
+        body = getattr(exc, "body", {}) or {}
+        code = body.get("code", "") if isinstance(body, dict) else ""
+        if "content_filter" in str(code) or "content_filter" in str(exc):
+            logger.warning("Azure content filter on chat (not a real threat): %s", exc)
+            raise ContentFilterError(f"Azure content filter: {exc}") from exc
+        logger.error("LLM chat BadRequestError: %s", exc, exc_info=True)
+        raise LLMUnavailableError(f"LLM chat call failed: {exc}") from exc
+    except Exception as exc:
+        logger.error("LLM chat call failed: %s", exc, exc_info=True)
+        raise LLMUnavailableError(f"LLM chat call failed: {exc}") from exc

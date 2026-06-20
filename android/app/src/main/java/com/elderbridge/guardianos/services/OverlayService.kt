@@ -32,6 +32,8 @@ import android.widget.TextView
 import com.elderbridge.guardianos.data.HistoryStore
 import com.elderbridge.guardianos.data.UserProfileStore
 import com.elderbridge.guardianos.network.ApiClient
+import com.elderbridge.guardianos.network.ChatMessage
+import com.elderbridge.guardianos.network.ChatRequest
 import com.elderbridge.guardianos.network.FinalDecision
 import com.elderbridge.guardianos.network.IncomingEvent
 import com.elderbridge.guardianos.redaction.ScreenContentHolder
@@ -83,6 +85,9 @@ class OverlayService : Service() {
     private var chatEditText: EditText? = null
     private var isChatMode = false
     private var currentAiResponse: String = ""
+
+    // Multi-turn conversation history — accumulates across the chat session
+    private val chatHistory = mutableListOf<ChatMessage>()
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
@@ -614,6 +619,7 @@ class OverlayService : Service() {
         tts?.stop()
         isChatMode = false
         currentAiResponse = ""
+        chatHistory.clear()
         cardHeaderView = null
         cardBodyView = null
         cardBodyScroll = null
@@ -637,6 +643,7 @@ class OverlayService : Service() {
         tts?.stop()
         isChatMode = false
         currentAiResponse = ""
+        chatHistory.clear()
         cardHeaderView = null
         cardBodyView = null
         cardBodyScroll = null
@@ -787,8 +794,10 @@ class OverlayService : Service() {
 
     private fun sendQuestion(question: String) {
         val snapshot = ScreenContentHolder.get()
-        val screenText = snapshot?.redactedText.orEmpty()
-        val combined = if (screenText.isNotBlank()) "$screenText\n\nUser question: $question" else question
+        val screenContext = snapshot?.redactedText.orEmpty()
+
+        chatHistory.add(ChatMessage(role = "user", content = question))
+
         analyzeJob?.cancel()
         analyzeJob = serviceScope.launch {
             val dp = resources.displayMetrics.density
@@ -808,7 +817,6 @@ class OverlayService : Service() {
             chatMessagesContainer?.addView(thinkingBubble, thinkingLp)
             chatScrollView?.post { chatScrollView?.fullScroll(View.FOCUS_DOWN) }
 
-            // Rotate through friendly placeholder messages every 2 s while waiting
             val thinkingRotateJob = launch {
                 var idx = 1
                 while (isActive) {
@@ -819,24 +827,25 @@ class OverlayService : Service() {
             }
 
             try {
-                val event = IncomingEvent(
-                    eventType = "FORM_SCREEN",
-                    sourceApp = snapshot?.sourcePackage ?: "unknown",
-                    redactedText = combined,
-                    timestamp = java.time.Instant.now().toString(),
-                    userId = PLACEHOLDER_USER_ID
+                val chatRequest = ChatRequest(
+                    userId = PLACEHOLDER_USER_ID,
+                    messages = chatHistory.toList(),
+                    screenContext = screenContext
                 )
                 val decision: FinalDecision = withContext(Dispatchers.IO) {
-                    ApiClient.api.analyzeEvent(event)
+                    ApiClient.api.askQuestion(chatRequest)
                 }
-                Log.d(TAG, "sendQuestion response: ${com.google.gson.Gson().toJson(decision)}")
+                Log.d(TAG, "askQuestion response: ${com.google.gson.Gson().toJson(decision)}")
+
+                chatHistory.add(ChatMessage(role = "assistant", content = decision.responseText))
+
                 if (isActive) {
                     Handler(Looper.getMainLooper()).post {
                         chatMessagesContainer?.removeView(thinkingBubble)
                         appendBubble(decision.responseText, isUser = false)
                     }
                     HistoryStore.addEntry(
-                        screenText = combined,
+                        screenText = question,
                         response = decision.responseText,
                         riskLevel = decision.riskFlag ?: "none"
                     )
@@ -844,7 +853,7 @@ class OverlayService : Service() {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.w(TAG, "sendQuestion failed (${e.javaClass.simpleName}): ${e.message}")
+                Log.w(TAG, "askQuestion failed (${e.javaClass.simpleName}): ${e.message}")
                 if (isActive) {
                     Handler(Looper.getMainLooper()).post {
                         chatMessagesContainer?.removeView(thinkingBubble)
@@ -919,8 +928,7 @@ class OverlayService : Service() {
         )
 
         private val CHAT_THINKING_MESSAGES = listOf(
-            "Thinking about your question...",
-            "Looking into this for you...",
+            "ElderBridge is thinking...",
             "One moment..."
         )
     }

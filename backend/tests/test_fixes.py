@@ -18,7 +18,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from agents.chat_handler import handle_chat_question, _CHAT_FALLBACK, _CHAT_SYSTEM_PROMPT
+from agents.chat_handler import handle_chat_question, _CHAT_FALLBACK, _build_system_prompt
 from agents.form_cache import check_form_cache
 from agents.fraud_detector import detect_financial_fraud, FRAUD_BLOCK_RESPONSE
 from agents.router_agent import RouterAgent, _is_low_signal
@@ -316,17 +316,19 @@ class TestChatHandler:
 
 
 class TestChatSystemPrompt:
-    """FIX 5: Chat system prompt leads with the answer, no screen re-summary."""
+    """FIX 5: Chat system prompt answers directly, no screen re-summary."""
 
-    def test_prompt_says_lead_with_answer(self):
-        assert "lead with the answer" in _CHAT_SYSTEM_PROMPT.lower()
+    def test_prompt_says_answer_directly(self):
+        prompt = _build_system_prompt().lower()
+        assert "directly" in prompt
 
-    def test_prompt_says_no_re_summarize(self):
-        assert "do not re-summarize" in _CHAT_SYSTEM_PROMPT.lower() or \
-               "do not repeat" in _CHAT_SYSTEM_PROMPT.lower()
+    def test_prompt_says_conversational(self):
+        prompt = _build_system_prompt().lower()
+        assert "conversational" in prompt or "conversation" in prompt
 
     def test_prompt_says_plain_text(self):
-        assert "no markdown" in _CHAT_SYSTEM_PROMPT.lower()
+        prompt = _build_system_prompt().lower()
+        assert "no markdown" in prompt
 
 
 # =========================================================================

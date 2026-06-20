@@ -55,5 +55,6 @@ def _stub_llm_offline():
          patch("agents.benefits_agent.call_llm_race", return_value=_OFFLINE_LLM_RESPONSE), \
          patch("agents.form_agent.call_llm", return_value=_OFFLINE_FORM_RESPONSE), \
          patch("agents.form_agent.call_llm_race", return_value=_OFFLINE_FORM_RESPONSE), \
-         patch("agents.chat_handler.call_llm", return_value=_OFFLINE_CHAT_RESPONSE):
+         patch("agents.chat_handler.call_llm", return_value=_OFFLINE_CHAT_RESPONSE), \
+         patch("agents.chat_handler.call_llm_chat", return_value=_OFFLINE_CHAT_RESPONSE):
         yield

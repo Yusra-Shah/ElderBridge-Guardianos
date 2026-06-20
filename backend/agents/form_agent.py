@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 
-from llm.client import LLMUnavailableError, call_llm, call_llm_race
+from llm.client import LLMUnavailableError, call_llm, call_llm_race, sanitize_for_llm
 from schemas.decision_schema import AgentResponse
 from schemas.event_schema import EventType, IncomingEvent
 
@@ -85,7 +85,7 @@ class FormAgent:
     # -----------------------------------------------------------------------
 
     def _explain_form(self, event: IncomingEvent) -> AgentResponse:
-        redacted_text = event.redacted_text[:500]
+        redacted_text = sanitize_for_llm(event.redacted_text[:500])
         user_message = (
             f"The person is looking at this government form or screen:\n\n"
             f"{redacted_text}\n\n"

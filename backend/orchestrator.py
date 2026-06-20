@@ -206,10 +206,14 @@ def _compute_baseline(event: IncomingEvent) -> tuple[RiskLevel, str, list[str]]:
     Uses keyword escalation over the event's redacted_text.  This is the
     backbone decision layer until specialist agents produce LLM outputs.
 
-    Known legitimate financial apps (banking, Easypaisa, JazzCash) bypass
-    certain keyword triggers like "password" and "send money" which are
-    normal UI labels in those apps.
+    Two bypass paths suppress false-positive keyword escalation:
+      1. Safe financial apps — "password" and "send money" are normal UI labels.
+      2. Safe document contexts — medical reports, bank statements, university
+         documents, and utility bills may legitimately mention OTP, codes, or
+         transfer amounts without being scams.
     """
+    from agents.guardrail_agent import _COMPILED_SAFE
+
     current = _EVENT_BASE_RISK.get(event.event_type, RiskLevel.SOFT_HELP)
     text_lower = event.redacted_text.lower()
 
@@ -217,8 +221,12 @@ def _compute_baseline(event: IncomingEvent) -> tuple[RiskLevel, str, list[str]]:
         pkg in event.source_app.lower() for pkg in _SAFE_FINANCIAL_APPS
     )
 
+    is_safe_document = any(p.search(event.redacted_text) for p in _COMPILED_SAFE)
+
     for keyword, level in _KEYWORD_RULES:
         if is_safe_app and keyword in _SAFE_APP_SKIP_KEYWORDS:
+            continue
+        if is_safe_document and keyword in _SAFE_APP_SKIP_KEYWORDS:
             continue
         if keyword in text_lower and _RISK_RANK[level] > _RISK_RANK[current]:
             current = level

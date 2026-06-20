@@ -25,7 +25,7 @@ import logging
 import re
 
 from agents.critic_agent import _rewrite
-from llm.client import LLMUnavailableError, call_llm, call_llm_race
+from llm.client import LLMUnavailableError, call_llm, call_llm_race, sanitize_for_llm
 from schemas.decision_schema import AgentResponse, EvidenceItem
 from schemas.event_schema import EventType, IncomingEvent
 
@@ -210,7 +210,7 @@ class BenefitsAgent:
                 "content. End your response with the standard helpline prompt."
             )
 
-        redacted_text = sanitized[:500]
+        redacted_text = sanitize_for_llm(sanitized[:500])
 
         parts = [
             f"Event type: {event.event_type.value}",

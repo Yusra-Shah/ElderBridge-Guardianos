@@ -15,7 +15,7 @@ import logging
 import re
 
 from agents.phishing_detector import _OFFICIAL_DOMAINS, _DOMAIN_RE, _EMAIL_RE
-from llm.client import LLMUnavailableError, call_llm
+from llm.client import LLMUnavailableError, call_llm, call_llm_chat, sanitize_for_llm
 from schemas.decision_schema import FinalDecision, RiskLevel
 
 logger = logging.getLogger("elderbridge.chat")
@@ -90,29 +90,38 @@ def _check_website_authenticity(question: str, screen_context: str) -> FinalDeci
 
     return None
 
-_CHAT_SYSTEM_PROMPT = (
-    "You are ElderBridge, a helpful assistant for elderly people in Pakistan.\n"
-    "The user is asking a follow-up question about something on their phone screen.\n\n"
-    "RULES:\n"
-    "Answer the question directly in one to three plain sentences.\n"
-    "Lead with the answer. Do not re-summarize the screen or repeat what the user already knows.\n"
-    "If the user asks what a word or term means, define it plainly in one or two sentences.\n"
-    "Use simple language an elderly person would understand.\n"
-    "No markdown. No dashes as punctuation. No bullet points. Plain text only.\n"
-    "If you are unsure, say so honestly and suggest asking a trusted person.\n"
-    "Never request OTP, PIN, password, or bank details.\n"
-    "Never mention OTP unless the word OTP or one-time password appears in the screen context.\n"
-    "Only describe what is explicitly visible in the screen text. Never invent or assume "
-    "information that is not present.\n"
-    "Never tell the user to share, upload, or take a photo. ElderBridge has no camera or "
-    "image input. If the user needs to describe something, ask them to type or read it aloud.\n"
-    "If asked about website authenticity, check the URL in the screen context. Official "
-    "Pakistani government sites always end in .gov.pk. Answer directly yes or no first, "
-    "then explain.\n"
-    # NOTE for Kaneeza: the "Looking into this for you" loading text is controlled
-    # on the Android side in OverlayService.kt, not here.
-    "Keep your answer under 60 words.\n"
-)
+def _build_system_prompt(screen_context: str = "") -> str:
+    """Build the chat system prompt, embedding sanitized screen context if provided."""
+    ctx_block = ""
+    if screen_context and screen_context.strip():
+        clean = sanitize_for_llm(screen_context[:500])
+        ctx_block = (
+            f"\nScreen context (what the user is currently looking at):\n"
+            f"{clean}\n"
+        )
+
+    return (
+        "You are ElderBridge, a warm and helpful assistant for elderly people in Pakistan.\n"
+        "You are having a real conversation with the user about what they see on their phone screen.\n"
+        f"{ctx_block}\n"
+        "Rules:\n"
+        "Answer conversationally like a trusted family member would.\n"
+        "Remember everything said earlier in this conversation.\n"
+        "Answer the specific question asked, directly and simply.\n"
+        "If the user says thank you, hello, goodbye, or similar, respond warmly and "
+        "ask if they need anything else.\n"
+        "If asked about website authenticity, check if the URL contains .gov.pk and "
+        "answer yes or no directly.\n"
+        "Never mention OTP unless it appears in the screen context.\n"
+        "Never tell the user to share a photo or upload an image.\n"
+        "Never run scam detection on casual conversational messages.\n"
+        "Keep responses under 60 words.\n"
+        "Plain text only, no markdown.\n"
+        "If you genuinely do not know something, say so honestly.\n"
+    )
+
+# NOTE for Kaneeza: the "Looking into this for you" loading text was removed
+# from OverlayService.kt.  Loading text is controlled on the Android side only.
 
 _CHAT_FALLBACK = FinalDecision(
     response_text=(
@@ -127,18 +136,63 @@ _CHAT_FALLBACK = FinalDecision(
 
 
 def handle_chat_question(
-    question: str,
+    question: str = "",
     screen_context: str = "",
+    messages: list[dict] | None = None,
 ) -> FinalDecision:
-    """Answer a user's follow-up question with a single fast LLM call.
+    """Answer a user's follow-up question, supporting multi-turn conversation.
+
+    When ``messages`` is provided (a list of {role, content} dicts), the full
+    conversation history is passed to the LLM as the messages array — exactly
+    like ChatGPT.  The system prompt is prepended automatically.
+
+    When ``messages`` is None, falls back to single-turn mode using ``question``
+    (backwards-compatible with existing callers and tests).
 
     Args:
-        question:       The user's text question.
-        screen_context: Optional screen text from a previous analysis.
+        question:       Single question (legacy single-turn mode).
+        screen_context: Current screen text, embedded in the system prompt.
+        messages:       Full conversation history [{role, content}, ...].
 
     Returns:
         FinalDecision with the answer as response_text and risk_flag=none.
     """
+    if messages is not None:
+        last_user_msg = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                last_user_msg = m.get("content", "")
+                break
+        if last_user_msg:
+            auth_answer = _check_website_authenticity(last_user_msg, screen_context)
+            if auth_answer is not None:
+                return auth_answer
+
+        system_prompt = _build_system_prompt(screen_context)
+        llm_messages = [{"role": "system", "content": system_prompt}]
+        for m in messages:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            if role in ("user", "assistant") and content:
+                llm_messages.append({"role": role, "content": content})
+
+        if len(llm_messages) < 2:
+            return _CHAT_FALLBACK
+
+        try:
+            response_text = call_llm_chat(llm_messages, max_tokens=512)
+            if not response_text or not response_text.strip():
+                return _CHAT_FALLBACK
+            return FinalDecision(
+                response_text=response_text.strip(),
+                risk_flag=RiskLevel.NONE,
+                next_steps=[],
+                source_citations=[],
+            )
+        except (LLMUnavailableError, Exception) as exc:
+            logger.warning("Chat LLM call failed: %s", exc)
+            return _CHAT_FALLBACK
+
     if not question or not question.strip():
         return _CHAT_FALLBACK
 
@@ -146,24 +200,11 @@ def handle_chat_question(
     if auth_answer is not None:
         return auth_answer
 
-    parts = []
-    if screen_context and screen_context.strip():
-        parts.append(
-            f"Screen context (do NOT repeat this back, just use it to understand "
-            f"what the user is looking at): {screen_context[:400]}"
-        )
-    parts.append(f"User question: {question}")
-    user_message = "\n".join(parts)
-
+    system_prompt = _build_system_prompt(screen_context)
     try:
-        response_text = call_llm(
-            _CHAT_SYSTEM_PROMPT,
-            user_message,
-            max_tokens=512,
-        )
+        response_text = call_llm(system_prompt, question, max_tokens=512)
         if not response_text or not response_text.strip():
             return _CHAT_FALLBACK
-
         return FinalDecision(
             response_text=response_text.strip(),
             risk_flag=RiskLevel.NONE,
