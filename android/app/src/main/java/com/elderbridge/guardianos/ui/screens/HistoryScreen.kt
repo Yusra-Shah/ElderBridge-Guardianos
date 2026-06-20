@@ -16,35 +16,33 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import com.elderbridge.guardianos.data.HistoryEntry
+import com.elderbridge.guardianos.data.HistoryStore
 import com.elderbridge.guardianos.ui.components.*
-import com.elderbridge.guardianos.ui.state.HistoryEventUiModel
-import com.elderbridge.guardianos.ui.viewmodel.HistoryViewModel
 import com.elderbridge.guardianos.ui.theme.*
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HistoryScreen(
-    onBack: () -> Unit,
-    vm: HistoryViewModel = viewModel()
-) {
-    val state by vm.uiState.collectAsState()
+fun HistoryScreen(onBack: () -> Unit) {
+    val entries = remember { HistoryStore.getEntries() }
 
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
                 title = { 
                     Text(
-                        "Activity Timeline",
+                        text = "Response History",
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold
-                    )
+                    ) 
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -63,12 +61,10 @@ fun HistoryScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            if (state.isLoading) {
-                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center), color = ElderBlue)
-            } else if (state.items.isEmpty()) {
+            if (entries.isEmpty()) {
                 AnimatedEmptyState(
-                    title = "Your history is clear",
-                    description = "We'll keep track of your security scans right here.",
+                    title = "No history yet",
+                    description = "Use the assistant to see responses here.",
                     emoji = "🛡️",
                     modifier = Modifier.fillMaxSize()
                 )
@@ -85,15 +81,11 @@ fun HistoryScreen(
                         )
                     }
 
-                    itemsIndexed(
-                        items = state.items,
-                        key = { _, item -> item.id }
-                    ) { index, item ->
-                        TimelineHistoryItem(
-                            item = item,
+                    itemsIndexed(entries, key = { _, it -> it.id }) { index, entry ->
+                        HistoryEntryTimelineItem(
+                            entry = entry,
                             isFirst = index == 0,
-                            isLast = index == state.items.lastIndex,
-                            onToggleExpand = { vm.toggleItemExpansion(item.id) }
+                            isLast = index == entries.lastIndex
                         )
                     }
 
@@ -105,12 +97,15 @@ fun HistoryScreen(
 }
 
 @Composable
-private fun TimelineHistoryItem(
-    item: HistoryEventUiModel,
+private fun HistoryEntryTimelineItem(
+    entry: HistoryEntry,
     isFirst: Boolean,
-    isLast: Boolean,
-    onToggleExpand: () -> Unit
+    isLast: Boolean
 ) {
+    var expanded by remember { mutableStateOf(false) }
+    val isLong = entry.response.length > 100
+    val hasScreen = entry.screenText.isNotBlank()
+
     // Entrance animation
     val visible = remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { visible.value = true }
@@ -138,7 +133,7 @@ private fun TimelineHistoryItem(
                 Box(
                     modifier = Modifier
                         .size(12.dp)
-                        .background(item.riskColor, CircleShape)
+                        .background(getRiskColor(entry.riskLevel), CircleShape)
                 )
 
                 Box(
@@ -153,7 +148,7 @@ private fun TimelineHistoryItem(
 
             // Premium Content Card
             PremiumCard(
-                onClick = onToggleExpand,
+                onClick = { expanded = !expanded },
                 modifier = Modifier.weight(1f)
             ) {
                 Column {
@@ -163,78 +158,99 @@ private fun TimelineHistoryItem(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = item.relativeTime,
+                            text = formatTimestamp(entry.timestamp),
                             style = MaterialTheme.typography.labelMedium,
                             color = TextSecondary,
                             fontWeight = FontWeight.Medium
                         )
-                        RiskBadge(riskLevel = item.riskLabel)
+                        RiskBadge(riskLevel = entry.riskLevel)
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
 
                     Text(
-                        text = if (item.isExpanded) item.response else item.response.take(120) + "...",
+                        text = if (expanded) entry.response
+                               else if (isLong) entry.response.take(100) + "…"
+                               else entry.response,
                         style = MaterialTheme.typography.bodyLarge,
                         color = TextPrimary,
                         lineHeight = 28.sp
                     )
 
                     AnimatedVisibility(
-                        visible = item.isExpanded,
+                        visible = expanded,
                         enter = expandVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy)) + fadeIn(),
                         exit = shrinkVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy)) + fadeOut()
                     ) {
                         Column {
-                            Spacer(modifier = Modifier.height(20.dp))
-                            HorizontalDivider(color = Divider.copy(alpha = 0.5f))
-                            Spacer(modifier = Modifier.height(20.dp))
-                            
-                            Text(
-                                "CAPTURED TEXT",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = ElderBlue,
-                                letterSpacing = 1.sp
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Surface(
-                                color = BackgroundLight.copy(alpha = 0.5f),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
+                            if (hasScreen) {
+                                Spacer(modifier = Modifier.height(20.dp))
+                                HorizontalDivider(color = Divider.copy(alpha = 0.5f))
+                                Spacer(modifier = Modifier.height(20.dp))
+                                
                                 Text(
-                                    text = item.screenText,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = TextSecondary,
-                                    modifier = Modifier.padding(12.dp)
+                                    "CAPTURED TEXT",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ElderBlue,
+                                    letterSpacing = 1.sp
                                 )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Surface(
+                                    color = BackgroundLight.copy(alpha = 0.5f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = entry.screenText,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = TextSecondary,
+                                        modifier = Modifier.padding(12.dp)
+                                    )
+                                }
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    if (isLong || hasScreen) {
+                        Spacer(modifier = Modifier.height(16.dp))
 
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(
-                            imageVector = if (item.isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            contentDescription = null,
-                            tint = ElderBlue,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = if (item.isExpanded) "Show Less" else "View Details",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = ElderBlue,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = null,
+                                tint = ElderBlue,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (expanded) "Show Less" else "View Details",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = ElderBlue,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
         }
     }
 }
+
+private fun getRiskColor(riskLevel: String): Color {
+    return when (riskLevel.lowercase()) {
+        "stop_and_verify" -> ErrorRed
+        "caution"         -> WarningAmber
+        else              -> ActiveGreen
+    }
+}
+
+private fun formatTimestamp(iso: String): String = runCatching {
+    DateTimeFormatter
+        .ofPattern("MMM d, h:mm a")
+        .withZone(ZoneId.systemDefault())
+        .format(Instant.parse(iso))
+}.getOrDefault(iso)
