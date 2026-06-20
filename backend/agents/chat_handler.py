@@ -15,7 +15,7 @@ import logging
 import re
 
 from agents.phishing_detector import _OFFICIAL_DOMAINS, _DOMAIN_RE, _EMAIL_RE
-from llm.client import LLMUnavailableError, call_llm, call_llm_chat, sanitize_for_llm
+from llm.client import ContentFilterError, LLMUnavailableError, call_llm, call_llm_chat, sanitize_for_llm
 from schemas.decision_schema import FinalDecision, RiskLevel
 
 logger = logging.getLogger("elderbridge.chat")
@@ -134,6 +134,16 @@ _CHAT_FALLBACK = FinalDecision(
     source_citations=[],
 )
 
+_CHAT_CONTENT_FILTER_FALLBACK = FinalDecision(
+    response_text=(
+        "I had trouble reading the screen content, but I am still here to help. "
+        "Could you tell me in your own words what you see or what you need help with?"
+    ),
+    risk_flag=RiskLevel.NONE,
+    next_steps=[],
+    source_citations=[],
+)
+
 
 def handle_chat_question(
     question: str = "",
@@ -189,6 +199,24 @@ def handle_chat_question(
                 next_steps=[],
                 source_citations=[],
             )
+        except ContentFilterError:
+            logger.warning("Chat content filter tripped, retrying without screen context")
+            try:
+                retry_messages = [{"role": "system", "content": _build_system_prompt("")}]
+                retry_messages.extend(
+                    m for m in llm_messages if m["role"] in ("user", "assistant")
+                )
+                response_text = call_llm_chat(retry_messages, max_tokens=512)
+                if response_text and response_text.strip():
+                    return FinalDecision(
+                        response_text=response_text.strip(),
+                        risk_flag=RiskLevel.NONE,
+                        next_steps=[],
+                        source_citations=[],
+                    )
+            except Exception as retry_exc:
+                logger.warning("Chat retry also failed: %s", retry_exc)
+            return _CHAT_CONTENT_FILTER_FALLBACK
         except (LLMUnavailableError, Exception) as exc:
             logger.warning("Chat LLM call failed: %s", exc)
             return _CHAT_FALLBACK
@@ -211,6 +239,20 @@ def handle_chat_question(
             next_steps=[],
             source_citations=[],
         )
+    except ContentFilterError:
+        logger.warning("Chat content filter tripped (single-turn), retrying without context")
+        try:
+            response_text = call_llm(_build_system_prompt(""), question, max_tokens=512)
+            if response_text and response_text.strip():
+                return FinalDecision(
+                    response_text=response_text.strip(),
+                    risk_flag=RiskLevel.NONE,
+                    next_steps=[],
+                    source_citations=[],
+                )
+        except Exception as retry_exc:
+            logger.warning("Chat retry also failed: %s", retry_exc)
+        return _CHAT_CONTENT_FILTER_FALLBACK
     except (LLMUnavailableError, Exception) as exc:
         logger.warning("Chat LLM call failed: %s", exc)
         return _CHAT_FALLBACK

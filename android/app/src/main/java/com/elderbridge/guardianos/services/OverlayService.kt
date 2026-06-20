@@ -88,6 +88,7 @@ class OverlayService : Service() {
 
     // Multi-turn conversation history — accumulates across the chat session
     private val chatHistory = mutableListOf<ChatMessage>()
+    private var chatFirstTurnSent = false
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
@@ -620,6 +621,7 @@ class OverlayService : Service() {
         isChatMode = false
         currentAiResponse = ""
         chatHistory.clear()
+        chatFirstTurnSent = false
         cardHeaderView = null
         cardBodyView = null
         cardBodyScroll = null
@@ -644,6 +646,7 @@ class OverlayService : Service() {
         isChatMode = false
         currentAiResponse = ""
         chatHistory.clear()
+        chatFirstTurnSent = false
         cardHeaderView = null
         cardBodyView = null
         cardBodyScroll = null
@@ -794,7 +797,12 @@ class OverlayService : Service() {
 
     private fun sendQuestion(question: String) {
         val snapshot = ScreenContentHolder.get()
-        val screenContext = snapshot?.redactedText.orEmpty()
+        val screenContext = if (!chatFirstTurnSent) {
+            chatFirstTurnSent = true
+            snapshot?.redactedText.orEmpty()
+        } else {
+            ""
+        }
 
         chatHistory.add(ChatMessage(role = "user", content = question))
 

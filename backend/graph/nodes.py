@@ -23,9 +23,10 @@ import re
 from agents.benefits_agent import BenefitsAgent
 from agents.critic_agent import CriticAgent
 from agents.form_agent import FormAgent
-from agents.guardrail_agent import GuardrailAgent
+from agents.guardrail_agent import GuardrailAgent, _COMPILED_SAFE
 from agents.research_agent import ResearchAgent
 from agents.router_agent import RouterAgent, classify_context
+from schemas.event_schema import EventType
 from graph.state import PipelineState
 from orchestrator import compute_baseline
 from schemas.decision_schema import AgentResponse, EvidenceItem, FinalDecision, RiskLevel
@@ -360,6 +361,17 @@ def node_guardrail(state: PipelineState) -> PipelineState:
             response_text=_enforce_quality(draft, context_type, event_text),
             risk_flag=state.get("risk_flag", RiskLevel.SOFT_HELP),
             next_steps=state.get("next_steps", []),
+            source_citations=state.get("evidence_items", []),
+        )
+
+    if (event.event_type == EventType.DOCUMENT
+            and any(p.search(event.redacted_text) for p in _COMPILED_SAFE)
+            and decision.risk_flag == RiskLevel.STOP_AND_VERIFY):
+        logger.info("node_guardrail | safe-document override: %s -> none", event.event_type.value)
+        decision = FinalDecision(
+            response_text=_enforce_quality(draft or decision.response_text, context_type, event_text),
+            risk_flag=RiskLevel.NONE,
+            next_steps=[],
             source_citations=state.get("evidence_items", []),
         )
 

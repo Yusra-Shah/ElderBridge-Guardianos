@@ -59,13 +59,33 @@ _CONTROL_CHARS_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
 _DUPLICATE_PHRASE_RE = re.compile(r'\b(\w[\w\s]{2,30}?)\s+\1\b', re.IGNORECASE)
 _MULTI_SPACE_RE = re.compile(r'[ \t]{2,}')
 _MULTI_NEWLINE_RE = re.compile(r'\n{3,}')
+_RAW_URL_RE = re.compile(r'https?://\S{60,}')
+_SOCIAL_PROFILE_RE = re.compile(
+    r'(?:facebook|instagram|twitter|linkedin|youtube|tiktok)\.com/\S*',
+    re.IGNORECASE,
+)
+_MAP_NOISE_RE = re.compile(
+    r'(leaflet|openstreetmap|map\s*data|zoom\s*in|zoom\s*out|'
+    r'no\s+officials?\s+data\s+available|'
+    r'keyboard_arrow_\w+|'
+    r'accessibility\s*menu|'
+    r'map\s*marker|'
+    r'tiles\s+courtesy)',
+    re.IGNORECASE,
+)
+_NAV_JUNK_RE = re.compile(
+    r'\b(share\s*button|bookmark\s*button|more\s*options|navigate\s*up|'
+    r'action_\w+|content_\w+|ic_\w+)\b',
+    re.IGNORECASE,
+)
 
 
 def sanitize_for_llm(text: str) -> str:
     """Clean raw accessibility text before sending to Azure to avoid content filter false positives.
 
     Strips URL tracking params, percent-encoded noise, private-use unicode icons,
-    control characters, and collapses repeated duplicate phrases.
+    control characters, social media profile URLs, map widget noise, leaflet/OSM
+    attribution, accessibility labels, and collapses repeated duplicate phrases.
     """
     if not text:
         return text
@@ -73,12 +93,14 @@ def sanitize_for_llm(text: str) -> str:
     text = _CONTROL_CHARS_RE.sub('', text)
     text = _UNICODE_ICON_RE.sub('', text)
 
-    def _strip_url_params(m: re.Match) -> str:
-        return m.group(1)
-    text = _URL_QUERY_RE.sub(_strip_url_params, text)
-
+    text = _URL_QUERY_RE.sub(lambda m: m.group(1), text)
     text = _TRACKING_PARAMS_RE.sub('', text)
     text = _PERCENT_ENCODED_RE.sub('', text)
+
+    text = _RAW_URL_RE.sub(lambda m: m.group()[:40], text)
+    text = _SOCIAL_PROFILE_RE.sub('', text)
+    text = _MAP_NOISE_RE.sub('', text)
+    text = _NAV_JUNK_RE.sub('', text)
 
     text = _DUPLICATE_PHRASE_RE.sub(r'\1', text)
 
