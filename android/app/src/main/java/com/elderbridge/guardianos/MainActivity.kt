@@ -14,7 +14,7 @@ import com.elderbridge.guardianos.ui.screens.OnboardingScreen
 import com.elderbridge.guardianos.ui.screens.OverlayPreviewScreen
 import com.elderbridge.guardianos.ui.screens.PermissionsScreen
 import com.elderbridge.guardianos.ui.screens.ProfileScreen
-import com.elderbridge.guardianos.ui.theme.ElderBridgeTheme
+import com.elderbridge.guardianos.ui.theme.ElderBridgeGuardianosTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -22,7 +22,7 @@ class MainActivity : ComponentActivity() {
         SpeechManager.init(this)
         enableEdgeToEdge()
         setContent {
-            ElderBridgeTheme {
+            ElderBridgeGuardianosTheme {
                 val navController = rememberNavController()
                 NavHost(navController = navController, startDestination = "onboarding") {
                     composable("onboarding") {
