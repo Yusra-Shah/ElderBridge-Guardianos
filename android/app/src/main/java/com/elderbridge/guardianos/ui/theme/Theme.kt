@@ -50,7 +50,7 @@ private val ElderLightColorScheme = lightColorScheme(
     onSurface = TextPrimary,
     onSurfaceVariant = TextSecondary,
     error = ErrorRed,
-    onError = TextOnPrimary
+    onError = TextOnPrimary,
 )
 
 @Composable
@@ -63,15 +63,16 @@ fun ElderBridgeGuardianosTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.background.toArgb()
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = true
+            // Following user's original preference: Primary colored status bar with light icons
+            window.statusBarColor = colorScheme.primary.toArgb()
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = false
         }
     }
 
     val premiumData = PremiumThemeData(
         gradientPrimary = Brush.verticalGradient(listOf(ElderBlue, ElderBlueDark)),
         gradientSurface = Brush.verticalGradient(listOf(SurfaceLight, Color(0xFFF1F5F9))),
-        gradientSuccess = Brush.verticalGradient(listOf(ActiveGreen, Color(0xFF047857))),
+        gradientSuccess = Brush.verticalGradient(listOf(ActiveGreen, Color(0xFF1B5E20))),
         shadowSoft = Color(0x0D000000),
         shadowStrong = Color(0x26000000),
         glassBase = Color(0xB3FFFFFF)

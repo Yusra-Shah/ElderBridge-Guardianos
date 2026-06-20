@@ -2,6 +2,7 @@ package com.elderbridge.guardianos.ui.components
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -9,6 +10,9 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ReportProblem
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,6 +22,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -277,5 +282,113 @@ fun AnimatedEmptyState(
             color = TextSecondary,
             textAlign = TextAlign.Center
         )
+    }
+}
+
+@Composable
+fun PremiumSwitch(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        modifier = modifier,
+        colors = SwitchDefaults.colors(
+            checkedThumbColor = Color.White,
+            checkedTrackColor = ActiveGreen,
+            uncheckedThumbColor = SurfaceLight,
+            uncheckedTrackColor = Divider,
+            uncheckedBorderColor = Divider
+        )
+    )
+}
+
+@Composable
+fun StatusHeroCard(status: com.elderbridge.guardianos.ui.state.SystemStatus) {
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val ringScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.1f,
+        animationSpec = infiniteRepeatable(tween(2000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "ring"
+    )
+
+    val color = when (status) {
+        com.elderbridge.guardianos.ui.state.SystemStatus.ACTIVE -> ActiveGreen
+        com.elderbridge.guardianos.ui.state.SystemStatus.ANALYZING -> ElderBlue
+        com.elderbridge.guardianos.ui.state.SystemStatus.SCAM_DETECTED -> ErrorRed
+        com.elderbridge.guardianos.ui.state.SystemStatus.OFF -> TextSecondary
+    }
+
+    val label = when (status) {
+        com.elderbridge.guardianos.ui.state.SystemStatus.ACTIVE -> "Guardian Active"
+        com.elderbridge.guardianos.ui.state.SystemStatus.ANALYZING -> "Analyzing Screen..."
+        com.elderbridge.guardianos.ui.state.SystemStatus.SCAM_DETECTED -> "Risk Detected!"
+        com.elderbridge.guardianos.ui.state.SystemStatus.OFF -> "Protection Off"
+    }
+
+    PremiumCard {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(160.dp)) {
+                // Background Glow
+                Box(
+                    modifier = Modifier
+                        .size(120.dp)
+                        .scale(ringScale)
+                        .background(color.copy(alpha = 0.15f), CircleShape)
+                        .blur(20.dp)
+                )
+                
+                // Ring
+                Canvas(modifier = Modifier.size(130.dp).scale(ringScale)) {
+                    drawCircle(
+                        color = color.copy(alpha = 0.2f),
+                        style = Stroke(width = 4.dp.toPx())
+                    )
+                }
+
+                // Core Icon
+                Surface(
+                    shape = CircleShape,
+                    color = color,
+                    shadowElevation = 8.dp,
+                    modifier = Modifier.size(80.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = when(status) {
+                                com.elderbridge.guardianos.ui.state.SystemStatus.SCAM_DETECTED -> Icons.Default.ReportProblem
+                                else -> Icons.Default.Shield
+                            },
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(40.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            Text(
+                text = label,
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = color
+            )
+            
+            Text(
+                text = if (status == com.elderbridge.guardianos.ui.state.SystemStatus.OFF) "Enable protection for your safety" else "Watching your screen for safety",
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextSecondary,
+                textAlign = TextAlign.Center
+            )
+        }
     }
 }
