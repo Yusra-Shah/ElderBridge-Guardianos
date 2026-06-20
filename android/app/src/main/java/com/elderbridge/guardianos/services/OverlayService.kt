@@ -9,10 +9,13 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
+import android.net.Uri
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -24,11 +27,14 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.EditText
 import android.widget.ScrollView
 import android.speech.tts.TextToSpeech
 import android.widget.TextView
+import androidx.core.content.res.ResourcesCompat
+import com.elderbridge.guardianos.R
 import com.elderbridge.guardianos.data.HistoryStore
 import com.elderbridge.guardianos.data.UserProfileStore
 import com.elderbridge.guardianos.network.ApiClient
@@ -60,11 +66,9 @@ class OverlayService : Service() {
     private var menuView: View? = null
     private var bubbleParams: WindowManager.LayoutParams? = null
 
-    // Coroutine scope tied to this service's lifetime; cancelled in onDestroy
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var analyzeJob: Job? = null
 
-    // Kept so the API response can update in-place without rebuilding the card
     private var cardHeaderView: TextView? = null
     private var cardBodyView: TextView? = null
     private var cardBodyScroll: ScrollView? = null
@@ -78,7 +82,6 @@ class OverlayService : Service() {
     )
     private var savedResponse: SavedResponse? = null
 
-    // Chat mode state
     private var chatArea: LinearLayout? = null
     private var chatScrollView: ScrollView? = null
     private var chatMessagesContainer: LinearLayout? = null
@@ -86,12 +89,75 @@ class OverlayService : Service() {
     private var isChatMode = false
     private var currentAiResponse: String = ""
 
-    // Multi-turn conversation history — accumulates across the chat session
     private val chatHistory = mutableListOf<ChatMessage>()
     private var chatFirstTurnSent = false
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+
+    // ── Overlay palette ──────────────────────────────────────────────────────
+
+    private data class Palette(
+        val ground: Int,
+        val surface: Int,
+        val surfaceAlt: Int,
+        val ink: Int,
+        val inkSoft: Int,
+        val sage: Int,
+        val clay: Int,
+        val ochre: Int,
+        val navy: Int,
+        val line: Int,
+        val clayStrong: Int,
+    )
+
+    private val lightPalette = Palette(
+        ground = Color.parseColor("#F3EDE3"),
+        surface = Color.parseColor("#FBF7F0"),
+        surfaceAlt = Color.parseColor("#ECE3D6"),
+        ink = Color.parseColor("#3A352F"),
+        inkSoft = Color.parseColor("#6F665B"),
+        sage = Color.parseColor("#7C8A6B"),
+        clay = Color.parseColor("#C2724B"),
+        ochre = Color.parseColor("#D8A24A"),
+        navy = Color.parseColor("#3F4A63"),
+        line = Color.parseColor("#E0D6C8"),
+        clayStrong = Color.parseColor("#B5532C"),
+    )
+
+    private val darkPalette = Palette(
+        ground = Color.parseColor("#211E1A"),
+        surface = Color.parseColor("#2B2722"),
+        surfaceAlt = Color.parseColor("#35302A"),
+        ink = Color.parseColor("#F0E9DD"),
+        inkSoft = Color.parseColor("#B7AC9D"),
+        sage = Color.parseColor("#9DB082"),
+        clay = Color.parseColor("#D98C63"),
+        ochre = Color.parseColor("#E6B65F"),
+        navy = Color.parseColor("#8593B3"),
+        line = Color.parseColor("#413A32"),
+        clayStrong = Color.parseColor("#D98C63"),
+    )
+
+    private fun palette(): Palette {
+        return if (UserProfileStore.isDarkModeEnabled(this)) darkPalette else lightPalette
+    }
+
+    private fun nunitoTypeface(): Typeface {
+        return try {
+            ResourcesCompat.getFont(this, R.font.nunito_semibold) ?: Typeface.DEFAULT
+        } catch (e: Exception) {
+            Typeface.DEFAULT
+        }
+    }
+
+    private fun nunitoRegularTypeface(): Typeface {
+        return try {
+            ResourcesCompat.getFont(this, R.font.nunito_regular) ?: Typeface.DEFAULT
+        } catch (e: Exception) {
+            Typeface.DEFAULT
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -136,6 +202,7 @@ class OverlayService : Service() {
 
     private fun addBubble() {
         val dp = resources.displayMetrics.density
+        val p = palette()
         val bubblePx = (64 * dp).toInt()
         val xBtnPx = (20 * dp).toInt()
 
@@ -153,13 +220,29 @@ class OverlayService : Service() {
         bubbleParams = params
 
         val frame = FrameLayout(this)
-        frame.background = circleDrawable(Color.parseColor("#1565C0"))
 
+        // Soft sage ring + surface fill
+        val ring = circleDrawable(p.sage)
+        val inner = circleDrawable(p.surface)
+        val layered = LayerDrawable(arrayOf(ring, inner))
+        val inset = (3 * dp).toInt()
+        layered.setLayerInset(1, inset, inset, inset, inset)
+        frame.background = layered
+
+        // Bridge mark icon in centre
+        val markView = ImageView(this).apply {
+            setImageResource(R.drawable.ic_elderbridge_mark)
+            contentDescription = "ElderBridge assistant, double tap to open"
+        }
+        frame.addView(markView, FrameLayout.LayoutParams(
+            (36 * dp).toInt(),
+            (36 * dp).toInt()
+        ).apply { gravity = Gravity.CENTER })
+
+        // Hidden text label kept for pulse animation compatibility
         val label = TextView(this).apply {
-            text = "EB"
-            textSize = 16f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
+            text = ""
+            visibility = View.GONE
         }
         bubbleLabel = label
         frame.addView(label, FrameLayout.LayoutParams(
@@ -167,14 +250,13 @@ class OverlayService : Service() {
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
-        // X button is a separate clickable child — Android dispatches its tap before
-        // the parent frame's onTouchListener, so no coordinate detection is needed.
+        // Close button as a separate tappable child
         val xBtn = TextView(this).apply {
-            text = "✕"
+            text = "x"
             textSize = 10f
-            setTextColor(Color.WHITE)
+            setTextColor(p.surface)
             gravity = Gravity.CENTER
-            background = circleDrawable(Color.parseColor("#C62828"))
+            background = circleDrawable(p.clayStrong)
             isFocusable = false
             isClickable = true
             setOnClickListener {
@@ -238,11 +320,13 @@ class OverlayService : Service() {
         if (bubbleParams == null) return
         if (menuView != null) { hideMenu(); return }
         val dp = resources.displayMetrics.density
+        val p = palette()
         val bx = bubbleParams?.x ?: 0
         val by = bubbleParams?.y ?: 200
+        val tf = nunitoTypeface()
 
         val menuParams = WindowManager.LayoutParams(
-            (170 * dp).toInt(),
+            (180 * dp).toInt(),
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
@@ -253,21 +337,24 @@ class OverlayService : Service() {
             y = by
         }
 
-        val pad = (10 * dp).toInt()
-        val gap = (6 * dp).toInt()
+        val pad = (12 * dp).toInt()
+        val gap = (8 * dp).toInt()
         val menu = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
-            background = roundedDrawable(Color.parseColor("#1A237E"), 12 * dp)
+            background = roundedDrawable(p.surface, 24 * dp)
+            elevation = 8 * dp
         }
 
-        fun addBtn(label: String, color: String, last: Boolean = false, onClick: () -> Unit) {
+        fun addMenuBtn(label: String, color: Int, last: Boolean = false, onClick: () -> Unit) {
             val btn = Button(this).apply {
                 text = label
-                textSize = 13f
+                textSize = 14f
                 isAllCaps = false
-                setTextColor(Color.WHITE)
-                background = roundedDrawable(Color.parseColor(color), 8 * dp)
+                typeface = tf
+                setTextColor(p.surface)
+                background = roundedDrawable(color, 16 * dp)
+                minimumHeight = (56 * dp).toInt()
                 setOnClickListener { onClick() }
             }
             menu.addView(btn, LinearLayout.LayoutParams(
@@ -276,11 +363,11 @@ class OverlayService : Service() {
             ).apply { if (!last) bottomMargin = gap })
         }
 
-        addBtn("Search Screen",  "#1565C0") { hideMenu(); expandCard() }
-        addBtn("Ask a Question", "#1565C0") { hideMenu(); expandCard(startInChatMode = true) }
-        addBtn("Emergency 1122", "#C62828") { hideMenu(); doEmergencyCall() }
-        addBtn("Alert Family",   "#E65100") { hideMenu(); doAlertFamily() }
-        addBtn("Close Menu",     "#37474F", last = true) { hideMenu() }
+        addMenuBtn("Search Screen", p.sage) { hideMenu(); expandCard() }
+        addMenuBtn("Ask a Question", p.navy) { hideMenu(); expandCard(startInChatMode = true) }
+        addMenuBtn("Emergency 1122", p.clayStrong) { hideMenu(); doEmergencyCall() }
+        addMenuBtn("Alert Family", p.ochre) { hideMenu(); doAlertFamily() }
+        addMenuBtn("Close Menu", p.inkSoft, last = true) { hideMenu() }
 
         menuView = menu
         try {
@@ -331,16 +418,20 @@ class OverlayService : Service() {
             expandedCard = null
         }
         val dp = resources.displayMetrics.density
+        val p = palette()
+        val tf = nunitoTypeface()
+        val tfBody = nunitoRegularTypeface()
+
         val cardParams = WindowManager.LayoutParams(
-            (300 * dp).toInt(),
+            (320 * dp).toInt(),
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = (16 * dp).toInt()
-            y = (280 * dp).toInt()
+            x = (12 * dp).toInt()
+            y = (200 * dp).toInt()
         }
         expandedCardParams = cardParams
 
@@ -348,7 +439,8 @@ class OverlayService : Service() {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
-            background = roundedDrawable(Color.parseColor("#003C8F"), 16 * dp)
+            background = roundedDrawable(p.surface, 28 * dp)
+            elevation = 12 * dp
         }
 
         val snapshot = ScreenContentHolder.get()
@@ -356,7 +448,18 @@ class OverlayService : Service() {
         val hasContent = snapshot != null && snapshot.redactedText.isNotBlank()
         val hasEnoughContent = snapshot != null && snapshot.redactedText.length >= 50
 
-        // Header row: status label on the left, minimize ▼ on the right
+        // Grab handle
+        val handle = View(this).apply {
+            background = roundedDrawable(p.line, 3 * dp)
+        }
+        card.addView(handle, LinearLayout.LayoutParams(
+            (40 * dp).toInt(), (4 * dp).toInt()
+        ).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            bottomMargin = (12 * dp).toInt()
+        })
+
+        // Header row
         val headerRow = FrameLayout(this)
 
         val headerTv = TextView(this).apply {
@@ -365,17 +468,22 @@ class OverlayService : Service() {
                 hasContent       -> "Not enough content to analyse"
                 else             -> "Not ready yet"
             }
-            textSize = 13f
-            setTextColor(Color.parseColor("#5E92F3"))
+            textSize = 14f
+            typeface = tf
+            setTextColor(p.inkSoft)
             setPadding(0, 0, 0, (10 * dp).toInt())
         }
         cardHeaderView = headerTv
 
         val minimizeBtn = TextView(this).apply {
-            text = "▼"
-            textSize = 14f
-            setTextColor(Color.parseColor("#5E92F3"))
+            text = "v"
+            textSize = 16f
+            typeface = tf
+            setTextColor(p.inkSoft)
             setPadding(0, 0, 0, (10 * dp).toInt())
+            minimumWidth = (56 * dp).toInt()
+            minimumHeight = (56 * dp).toInt()
+            gravity = Gravity.CENTER
             setOnClickListener { minimizeCard() }
         }
 
@@ -389,17 +497,17 @@ class OverlayService : Service() {
             FrameLayout.LayoutParams.WRAP_CONTENT
         ).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL })
 
-        // Body — updated in-place when the API responds
+        // Body text
         val bodyTv = TextView(this).apply {
             text = if (hasContent) "" else "Open a form or message, then tap me again."
-            textSize = 17f
-            setTextColor(Color.WHITE)
+            textSize = 18f
+            typeface = tfBody
+            setTextColor(p.ink)
             setPadding(0, 0, 0, (20 * dp).toInt())
-            setLineSpacing(0f, 1.4f)
+            setLineSpacing(0f, 1.6f)
         }
         cardBodyView = bodyTv
 
-        // Cap body height so long responses scroll rather than pushing Close off screen
         val maxBodyHeightPx = (400 * dp).toInt()
         val bodyScroll = object : ScrollView(this) {
             override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -416,40 +524,51 @@ class OverlayService : Service() {
         }
         cardBodyScroll = bodyScroll
 
-        // Action buttons
+        // Action buttons with spec colours
+        val btnRadius = 16 * dp
+        val btnHeight = (48 * dp).toInt()
+
         val readAloudBtnView = Button(this).apply {
             text = "Read Aloud"
-            textSize = 11f
+            textSize = 14f
             isAllCaps = false
-            setTextColor(Color.WHITE)
-            background = roundedDrawable(Color.parseColor("#1565C0"), 8 * dp)
+            typeface = tf
+            setTextColor(p.surface)
+            background = roundedDrawable(p.sage, btnRadius)
+            minimumHeight = btnHeight
         }
         readAloudBtn = readAloudBtnView
 
         val askBtnView = Button(this).apply {
             text = "Ask a Question"
-            textSize = 11f
+            textSize = 14f
             isAllCaps = false
-            setTextColor(Color.WHITE)
-            background = roundedDrawable(Color.parseColor("#1565C0"), 8 * dp)
+            typeface = tf
+            setTextColor(p.surface)
+            background = roundedDrawable(p.navy, btnRadius)
+            minimumHeight = btnHeight
             setOnClickListener { enterChatMode() }
         }
 
         val emergencyBtnView = Button(this).apply {
             text = "Emergency"
-            textSize = 11f
+            textSize = 14f
             isAllCaps = false
-            setTextColor(Color.WHITE)
-            background = roundedDrawable(Color.parseColor("#C62828"), 8 * dp)
+            typeface = tf
+            setTextColor(p.surface)
+            background = roundedDrawable(p.clayStrong, btnRadius)
+            minimumHeight = btnHeight
             setOnClickListener { doEmergencyCall() }
         }
 
         val alertFamilyBtnView = Button(this).apply {
             text = "Alert Family"
-            textSize = 11f
+            textSize = 14f
             isAllCaps = false
-            setTextColor(Color.WHITE)
-            background = roundedDrawable(Color.parseColor("#E65100"), 8 * dp)
+            typeface = tf
+            setTextColor(p.surface)
+            background = roundedDrawable(p.ochre, btnRadius)
+            minimumHeight = btnHeight
             setOnClickListener { doAlertFamily() }
         }
 
@@ -458,7 +577,7 @@ class OverlayService : Service() {
             weightSum = 4f
             visibility = View.GONE
         }
-        val gap = (4 * dp).toInt()
+        val gap = (6 * dp).toInt()
         actionRowView.addView(readAloudBtnView,
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                 .apply { marginEnd = gap })
@@ -472,7 +591,7 @@ class OverlayService : Service() {
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         actionRow = actionRowView
 
-        // Chat area (hidden until "Ask a Question" is tapped)
+        // Chat area (hidden until "Ask a Question")
         val chatMsgsContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, (8 * dp).toInt(), 0, (8 * dp).toInt())
@@ -496,21 +615,24 @@ class OverlayService : Service() {
         chatScrollView = chatScroll
 
         val chatInput = EditText(this).apply {
-            hint = "Type your question…"
-            textSize = 14f
-            setTextColor(Color.WHITE)
-            setHintTextColor(Color.parseColor("#90CAF9"))
-            background = roundedDrawable(Color.parseColor("#1A4A8A"), 8 * dp)
-            setPadding((12 * dp).toInt(), (8 * dp).toInt(), (12 * dp).toInt(), (8 * dp).toInt())
+            hint = "Type your question..."
+            textSize = 16f
+            typeface = tfBody
+            setTextColor(p.ink)
+            setHintTextColor(p.inkSoft)
+            background = roundedDrawable(p.surfaceAlt, 14 * dp)
+            setPadding((12 * dp).toInt(), (10 * dp).toInt(), (12 * dp).toInt(), (10 * dp).toInt())
         }
         chatEditText = chatInput
 
         val sendBtn = Button(this).apply {
             text = "Send"
-            textSize = 12f
+            textSize = 14f
             isAllCaps = false
-            setTextColor(Color.WHITE)
-            background = roundedDrawable(Color.parseColor("#1565C0"), 8 * dp)
+            typeface = tf
+            setTextColor(p.surface)
+            background = roundedDrawable(p.navy, 14 * dp)
+            minimumHeight = (48 * dp).toInt()
             setOnClickListener {
                 val q = chatInput.text.toString().trim()
                 if (q.isNotEmpty()) {
@@ -544,8 +666,12 @@ class OverlayService : Service() {
 
         val closeBtn = Button(this).apply {
             text = "Close"
-            setTextColor(Color.WHITE)
-            background = roundedDrawable(Color.parseColor("#1565C0"), 10 * dp)
+            textSize = 16f
+            isAllCaps = false
+            typeface = tf
+            setTextColor(p.inkSoft)
+            background = roundedDrawable(p.surfaceAlt, 16 * dp)
+            minimumHeight = (56 * dp).toInt()
             setOnClickListener { collapseCard() }
         }
 
@@ -562,7 +688,10 @@ class OverlayService : Service() {
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { bottomMargin = (8 * dp).toInt() })
-        card.addView(closeBtn)
+        card.addView(closeBtn, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
 
         var cardInitX = 0; var cardInitY = 0
         var cardTouchX = 0f; var cardTouchY = 0f
@@ -612,7 +741,6 @@ class OverlayService : Service() {
     }
 
     private fun collapseCard() {
-        // Cancel any in-flight API call so a late response can't touch removed views
         analyzeJob?.cancel()
         analyzeJob = null
         savedResponse = null
@@ -639,8 +767,6 @@ class OverlayService : Service() {
         Log.d(TAG, "Overlay card collapsed")
     }
 
-    // Hides the card but lets any in-flight analysis complete and save to history.
-    // The bubble continues pulsing while the job is active.
     private fun minimizeCard() {
         tts?.stop()
         isChatMode = false
@@ -679,9 +805,6 @@ class OverlayService : Service() {
                 }
             }
             try {
-                // SECURITY: snapshot.redactedText originates from ScreenContentHolder,
-                // which ScreenReaderService writes only after RedactionEngine.redact().
-                // No raw screen text ever reaches this payload.
                 val event = IncomingEvent(
                     eventType = "FORM_SCREEN",
                     sourceApp = snapshot.sourcePackage,
@@ -707,7 +830,7 @@ class OverlayService : Service() {
                 }
 
             } catch (e: CancellationException) {
-                throw e // always rethrow so coroutine framework cancels cleanly
+                throw e
             } catch (e: Exception) {
                 Log.w(TAG, "analyzeEvent failed (${e.javaClass.simpleName}): ${e.message}")
                 if (isActive) Handler(Looper.getMainLooper()).post { showError(e) }
@@ -718,21 +841,28 @@ class OverlayService : Service() {
         }
     }
 
-    // Both run on Dispatchers.Main (the scope default), so direct View mutation is safe
-
     private fun showResponse(decision: FinalDecision) {
         currentAiResponse = decision.responseText
+        val riskFlag = decision.riskFlag ?: "none"
         savedResponse = SavedResponse(
-            headerText = "ElderBridge says:",
+            headerText = riskHeaderText(riskFlag),
             bodyText = decision.responseText,
-            riskFlag = decision.riskFlag ?: "none"
+            riskFlag = riskFlag
         )
-        cardHeaderView?.text = "ElderBridge says:"
+        cardHeaderView?.text = riskHeaderText(riskFlag)
         cardBodyView?.text = decision.responseText
         readAloudBtn?.setOnClickListener {
             if (ttsReady) tts?.speak(decision.responseText, TextToSpeech.QUEUE_FLUSH, null, "eb_tts")
         }
         actionRow?.visibility = View.VISIBLE
+    }
+
+    private fun riskHeaderText(riskFlag: String): String {
+        return when (riskFlag.lowercase()) {
+            "stop_and_verify", "verify_first" -> "ElderBridge says: Stop and check"
+            "caution", "soft_help" -> "ElderBridge says: Take a moment"
+            else -> "ElderBridge says: Looks fine"
+        }
     }
 
     private fun showError(e: Exception) {
@@ -748,7 +878,6 @@ class OverlayService : Service() {
         actionRow?.visibility = View.GONE
         chatArea?.visibility = View.VISIBLE
 
-        // Allow the soft keyboard to focus the EditText
         expandedCard?.let { card ->
             val params = expandedCardParams ?: return@let
             params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
@@ -766,18 +895,20 @@ class OverlayService : Service() {
 
     private fun appendBubble(text: String, isUser: Boolean) {
         val dp = resources.displayMetrics.density
+        val p = palette()
         val container = chatMessagesContainer ?: return
 
         val bubble = TextView(this).apply {
             this.text = text
-            textSize = 14f
-            setTextColor(Color.WHITE)
+            textSize = 16f
+            typeface = nunitoRegularTypeface()
+            setTextColor(p.ink)
             background = roundedDrawable(
-                if (isUser) Color.parseColor("#37474F") else Color.parseColor("#1565C0"),
-                10 * dp
+                if (isUser) p.surfaceAlt else alphaBlend(p.sage, p.surface, 0.15f),
+                16 * dp
             )
-            val hPad = (12 * dp).toInt()
-            val vPad = (8 * dp).toInt()
+            val hPad = (14 * dp).toInt()
+            val vPad = (10 * dp).toInt()
             setPadding(hPad, vPad, hPad, vPad)
         }
 
@@ -785,7 +916,7 @@ class OverlayService : Service() {
             LinearLayout.LayoutParams.WRAP_CONTENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply {
-            bottomMargin = (6 * dp).toInt()
+            bottomMargin = (8 * dp).toInt()
             gravity = if (isUser) Gravity.END else Gravity.START
             if (isUser) marginStart = (40 * dp).toInt()
             else marginEnd = (40 * dp).toInt()
@@ -809,27 +940,30 @@ class OverlayService : Service() {
         analyzeJob?.cancel()
         analyzeJob = serviceScope.launch {
             val dp = resources.displayMetrics.density
+            val p = palette()
             val thinkingBubble = TextView(this@OverlayService).apply {
-                text = CHAT_THINKING_MESSAGES[0]
-                textSize = 14f
-                setTextColor(Color.parseColor("#90CAF9"))
-                setPadding((12 * dp).toInt(), (8 * dp).toInt(), (12 * dp).toInt(), (8 * dp).toInt())
+                text = "..."
+                textSize = 16f
+                typeface = nunitoRegularTypeface()
+                setTextColor(p.sage)
+                setPadding((14 * dp).toInt(), (10 * dp).toInt(), (14 * dp).toInt(), (10 * dp).toInt())
             }
             val thinkingLp = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
-                bottomMargin = (6 * dp).toInt()
+                bottomMargin = (8 * dp).toInt()
                 gravity = Gravity.START
             }
             chatMessagesContainer?.addView(thinkingBubble, thinkingLp)
             chatScrollView?.post { chatScrollView?.fullScroll(View.FOCUS_DOWN) }
 
             val thinkingRotateJob = launch {
-                var idx = 1
+                var idx = 0
                 while (isActive) {
-                    delay(2_000)
-                    thinkingBubble.text = CHAT_THINKING_MESSAGES[idx % CHAT_THINKING_MESSAGES.size]
+                    delay(600)
+                    val dots = when (idx % 3) { 0 -> "."; 1 -> ".."; else -> "..." }
+                    thinkingBubble.text = dots
                     idx++
                 }
             }
@@ -877,10 +1011,15 @@ class OverlayService : Service() {
     // ── Bubble pulse animation ─────────────────────────────────────────────────
 
     private fun startBubblePulse() {
-        val label = bubbleLabel ?: return
+        val view = bubbleView ?: return
         bubblePulseAnim?.cancel()
-        bubblePulseAnim = ObjectAnimator.ofFloat(label, "alpha", 1f, 0.3f, 1f).apply {
-            duration = 1200
+        bubblePulseAnim = ObjectAnimator.ofFloat(view, "scaleX", 1f, 1.04f, 1f).apply {
+            duration = 2400
+            repeatCount = ObjectAnimator.INFINITE
+            start()
+        }
+        ObjectAnimator.ofFloat(view, "scaleY", 1f, 1.04f, 1f).apply {
+            duration = 2400
             repeatCount = ObjectAnimator.INFINITE
             start()
         }
@@ -889,14 +1028,15 @@ class OverlayService : Service() {
     private fun stopBubblePulse() {
         bubblePulseAnim?.cancel()
         bubblePulseAnim = null
-        bubbleLabel?.alpha = 1f
+        bubbleView?.scaleX = 1f
+        bubbleView?.scaleY = 1f
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     override fun onDestroy() {
         super.onDestroy()
-        serviceScope.cancel()       // cancels analyzeJob and all child coroutines
+        serviceScope.cancel()
         stopBubblePulse()
         tts?.stop()
         tts?.shutdown()
@@ -923,21 +1063,22 @@ class OverlayService : Service() {
         setColor(color)
     }
 
+    private fun alphaBlend(fg: Int, bg: Int, ratio: Float): Int {
+        val r = (Color.red(fg) * ratio + Color.red(bg) * (1 - ratio)).toInt()
+        val g = (Color.green(fg) * ratio + Color.green(bg) * (1 - ratio)).toInt()
+        val b = (Color.blue(fg) * ratio + Color.blue(bg) * (1 - ratio)).toInt()
+        return Color.rgb(r, g, b)
+    }
+
     companion object {
         private const val TAG = "OverlayService"
 
-        // TODO: Replace with a real authenticated user ID when the auth module lands
         private const val PLACEHOLDER_USER_ID = "00000000-0000-0000-0000-000000000001"
 
         private val THINKING_MESSAGES = listOf(
-            "Checking official sources…",
-            "Analysing your screen…",
-            "Preparing your explanation…"
-        )
-
-        private val CHAT_THINKING_MESSAGES = listOf(
-            "ElderBridge is thinking...",
-            "One moment..."
+            "Checking official sources...",
+            "Analysing your screen...",
+            "Preparing your explanation..."
         )
     }
 }

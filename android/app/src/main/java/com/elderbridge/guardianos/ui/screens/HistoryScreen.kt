@@ -12,16 +12,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,12 +33,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.elderbridge.guardianos.data.HistoryEntry
 import com.elderbridge.guardianos.data.HistoryStore
+import com.elderbridge.guardianos.ui.theme.EbClayStrong
+import com.elderbridge.guardianos.ui.theme.EbOchre
+import com.elderbridge.guardianos.ui.theme.EbSage
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -49,27 +56,29 @@ fun HistoryScreen(onBack: () -> Unit) {
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        Box(
+        // Header
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.primary)
-                .padding(horizontal = 16.dp, vertical = 20.dp)
+                .padding(horizontal = 16.dp, vertical = 20.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onBack) {
-                    Text(
-                        text = "← Back",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
-                }
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "Response History",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onPrimary
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier.size(56.dp)
+            ) {
+                Icon(
+                    painter = painterResource(android.R.drawable.ic_menu_revert),
+                    contentDescription = "Back",
+                    tint = MaterialTheme.colorScheme.onBackground
                 )
             }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "History",
+                style = MaterialTheme.typography.headlineLarge,
+                color = MaterialTheme.colorScheme.onBackground
+            )
         }
 
         if (entries.isEmpty()) {
@@ -79,17 +88,26 @@ fun HistoryScreen(onBack: () -> Unit) {
                     .padding(32.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = "No history yet.\nUse the assistant to see responses here.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "No history yet",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Use the assistant to see responses here.",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(entries, key = { it.id }) { entry ->
@@ -106,89 +124,111 @@ private fun HistoryEntryCard(entry: HistoryEntry) {
     val isLong = entry.response.length > 100
     val hasScreen = entry.screenText.isNotBlank()
 
+    val (riskColor, riskLabel) = riskDisplay(entry.riskLevel)
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { expanded = !expanded },
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = formatTimestamp(entry.timestamp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                RiskBadge(riskLevel = entry.riskLevel)
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = if (expanded) entry.response
-                       else if (isLong) entry.response.take(100) + "…"
-                       else entry.response,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface
+        Row(modifier = Modifier.fillMaxWidth()) {
+            // Left risk strip
+            Box(
+                modifier = Modifier
+                    .width(6.dp)
+                    .height(if (expanded) 200.dp else 100.dp)
+                    .background(riskColor)
             )
+            Column(modifier = Modifier.padding(20.dp).weight(1f)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = formatTimestamp(entry.timestamp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    RiskPill(riskColor = riskColor, riskLabel = riskLabel)
+                }
 
-            if (expanded && hasScreen) {
                 Spacer(modifier = Modifier.height(10.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    text = "Screen text",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = if (entry.screenText.length > 200)
-                               entry.screenText.take(200) + "…"
-                           else entry.screenText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
 
-            if (isLong || hasScreen) {
-                Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = if (expanded) "Show less ▲" else "Show more ▼",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
+                    text = if (expanded) entry.response
+                    else entry.response,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = if (expanded) Int.MAX_VALUE else 2,
+                    overflow = TextOverflow.Ellipsis
                 )
+
+                if (expanded && hasScreen) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Screen text",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = if (entry.screenText.length > 200)
+                            entry.screenText.take(200) + "..."
+                        else entry.screenText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                if (isLong || hasScreen) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = if (expanded) "Show less" else "Show more",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun RiskBadge(riskLevel: String) {
-    val (bgColor, label) = when (riskLevel.lowercase()) {
-        "stop_and_verify" -> Color(0xFFB71C1C) to "Stop & Verify"
-        "caution"         -> Color(0xFFF57F17) to "Caution"
-        else              -> Color(0xFF2E7D32) to "OK"
-    }
-    Box(
+private fun RiskPill(riskColor: androidx.compose.ui.graphics.Color, riskLabel: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(bgColor)
-            .padding(horizontal = 8.dp, vertical = 3.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(riskColor.copy(alpha = 0.12f))
+            .padding(horizontal = 10.dp, vertical = 4.dp)
     ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(riskColor)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
         Text(
-            text = label,
+            text = riskLabel,
             style = MaterialTheme.typography.labelSmall,
-            color = Color.White,
+            color = riskColor,
             fontWeight = FontWeight.Bold
         )
+    }
+}
+
+private fun riskDisplay(riskLevel: String): Pair<androidx.compose.ui.graphics.Color, String> {
+    return when (riskLevel.lowercase()) {
+        "stop_and_verify", "verify_first" -> EbClayStrong to "Stop and check"
+        "caution", "soft_help" -> EbOchre to "Take a moment"
+        else -> EbSage to "Looks fine"
     }
 }
 

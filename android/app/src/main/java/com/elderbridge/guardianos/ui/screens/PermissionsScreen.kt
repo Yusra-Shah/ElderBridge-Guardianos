@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -35,13 +36,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.elderbridge.guardianos.ui.theme.ActiveGreen
-import com.elderbridge.guardianos.ui.theme.ActiveGreenLight
+import com.elderbridge.guardianos.ui.theme.EbSage
+import com.elderbridge.guardianos.ui.theme.EbSurface
 
 @Composable
 fun PermissionsScreen(onContinue: () -> Unit) {
     val context = LocalContext.current
-    // refreshKey increments when user taps "Check again" after returning from Settings
     var refreshKey by remember { mutableIntStateOf(0) }
 
     val hasAccessibility = remember(refreshKey) { isScreenReaderEnabled(context) }
@@ -107,14 +107,13 @@ fun PermissionsScreen(onContinue: () -> Unit) {
 
         Spacer(modifier = Modifier.height(32.dp))
 
-        // After returning from system Settings, user taps this to re-check grant status
         TextButton(
             onClick = { refreshKey++ },
             modifier = Modifier.height(56.dp)
         ) {
             Text(
                 text = "Check status again",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.primary
             )
         }
@@ -126,7 +125,11 @@ fun PermissionsScreen(onContinue: () -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .height(64.dp),
-            shape = RoundedCornerShape(16.dp)
+            shape = RoundedCornerShape(16.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = EbSage,
+                contentColor = EbSurface
+            )
         ) {
             Text(
                 text = if (hasAccessibility && hasNotificationAccess && hasOverlay)
@@ -146,9 +149,8 @@ private fun PermissionCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(20.dp)) {
             Row(
@@ -168,7 +170,7 @@ private fun PermissionCard(
             Spacer(modifier = Modifier.height(10.dp))
             Text(
                 text = description,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             if (!isGranted) {
@@ -178,7 +180,7 @@ private fun PermissionCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(56.dp),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(16.dp)
                 ) {
                     Text(
                         text = "Enable in Settings",
@@ -193,26 +195,19 @@ private fun PermissionCard(
 @Composable
 private fun GrantedChip(isGranted: Boolean) {
     Surface(
-        color = if (isGranted) ActiveGreenLight else MaterialTheme.colorScheme.errorContainer,
+        color = if (isGranted) EbSage.copy(alpha = 0.15f)
+        else MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
         shape = RoundedCornerShape(50)
     ) {
         Text(
-            text = if (isGranted) "✓ Granted" else "Not granted",
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (isGranted) ActiveGreen else MaterialTheme.colorScheme.error,
+            text = if (isGranted) "Granted" else "Not granted",
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (isGranted) EbSage else MaterialTheme.colorScheme.error,
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
         )
     }
 }
 
-/**
- * Returns true only when ScreenReaderService specifically is listed in the enabled
- * accessibility services setting. Checking the full component name avoids false
- * positives from other accessibility services the user may have enabled from this package.
- *
- * The setting stores entries as "pkg/ComponentClass" separated by ":", in either
- * short (pkg/.ClassName) or long (pkg/pkg.ClassName) form.
- */
 private fun isScreenReaderEnabled(context: Context): Boolean {
     val enabled = Settings.Secure.getString(
         context.contentResolver,

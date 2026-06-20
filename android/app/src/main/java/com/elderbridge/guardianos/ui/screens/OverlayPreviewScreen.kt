@@ -3,6 +3,7 @@ package com.elderbridge.guardianos.ui.screens
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,9 +24,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -34,23 +36,23 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.elderbridge.guardianos.ui.theme.ElderBlue
-import com.elderbridge.guardianos.ui.theme.ElderBlueDark
-import com.elderbridge.guardianos.ui.theme.ElderBlueLight
-import com.elderbridge.guardianos.ui.theme.TextOnPrimary
+import com.elderbridge.guardianos.R
+import com.elderbridge.guardianos.ui.theme.EbNavy
+import com.elderbridge.guardianos.ui.theme.EbSage
 
 private data class MockField(val label: String, val explanation: String)
 
 private val mockFields = listOf(
     MockField(
         label = "Monthly Income",
-        explanation = "This field is asking for your total monthly income — the money you receive each month from all sources, such as Social Security, a pension, or part-time work."
+        explanation = "This field is asking for your total monthly income, the money you receive each month from all sources, such as Social Security, a pension, or part time work."
     ),
     MockField(
         label = "Medicare Number",
-        explanation = "This is your unique Medicare ID. You can find it printed on your red, white, and blue Medicare card — it is usually 11 characters long."
+        explanation = "This is your unique Medicare ID. You can find it printed on your red, white, and blue Medicare card. It is usually 11 characters long."
     ),
     MockField(
         label = "Proof of Residence",
@@ -68,31 +70,32 @@ fun OverlayPreviewScreen(onBack: () -> Unit) {
             .background(MaterialTheme.colorScheme.background)
             .verticalScroll(rememberScrollState())
     ) {
-        // Header bar
-        Box(
+        // Header
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.primary)
-                .padding(horizontal = 16.dp, vertical = 20.dp)
+                .padding(horizontal = 16.dp, vertical = 20.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onBack) {
-                    Text(
-                        text = "← Back",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
-                }
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "Demo: How It Works",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onPrimary
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier.size(56.dp)
+            ) {
+                Icon(
+                    painter = painterResource(android.R.drawable.ic_menu_revert),
+                    contentDescription = "Back",
+                    tint = MaterialTheme.colorScheme.onBackground
                 )
             }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Demo: How It Works",
+                style = MaterialTheme.typography.headlineLarge,
+                color = MaterialTheme.colorScheme.onBackground
+            )
         }
 
-        Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 28.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp)) {
             Text(
                 text = "Tap any field below to see how the assistant explains it.",
                 style = MaterialTheme.typography.bodyLarge,
@@ -113,7 +116,7 @@ fun OverlayPreviewScreen(onBack: () -> Unit) {
             }
 
             Spacer(modifier = Modifier.height(8.dp))
-            HorizontalDivider()
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
             Spacer(modifier = Modifier.height(28.dp))
 
             Text(
@@ -123,6 +126,7 @@ fun OverlayPreviewScreen(onBack: () -> Unit) {
                 modifier = Modifier.padding(bottom = 20.dp)
             )
             BubbleMockup()
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }
@@ -135,16 +139,15 @@ private fun MockFormField(field: MockField, isExpanded: Boolean, onTap: () -> Un
                 .fillMaxWidth()
                 .clickable(onClick = onTap),
             shape = if (isExpanded)
-                RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+                RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
             else
-                RoundedCornerShape(12.dp),
+                RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(
                 containerColor = if (isExpanded)
-                    ElderBlueLight.copy(alpha = 0.12f)
+                    EbSage.copy(alpha = 0.08f)
                 else
                     MaterialTheme.colorScheme.surface
             ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 20.dp),
@@ -157,16 +160,15 @@ private fun MockFormField(field: MockField, isExpanded: Boolean, onTap: () -> Un
                     color = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.weight(1f)
                 )
-                // The "?" bubble that mirrors the real floating bubble
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(44.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.primary)
                 ) {
                     Text(
-                        text = if (isExpanded) "✕" else "?",
+                        text = "?",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onPrimary
                     )
@@ -181,20 +183,20 @@ private fun MockFormField(field: MockField, isExpanded: Boolean, onTap: () -> Un
         ) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp),
-                colors = CardDefaults.cardColors(containerColor = ElderBlueDark)
+                shape = RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp),
+                colors = CardDefaults.cardColors(containerColor = EbNavy)
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
                     Text(
                         text = "ElderBridge says:",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = ElderBlueLight,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = EbSage,
                         modifier = Modifier.padding(bottom = 10.dp)
                     )
                     Text(
                         text = field.explanation,
                         style = MaterialTheme.typography.bodyLarge,
-                        color = TextOnPrimary
+                        color = MaterialTheme.colorScheme.onPrimary
                     )
                 }
             }
@@ -213,9 +215,13 @@ private fun BubbleMockup() {
             modifier = Modifier
                 .size(64.dp)
                 .clip(CircleShape)
-                .background(ElderBlue)
+                .background(MaterialTheme.colorScheme.surface)
         ) {
-            Text(text = "EB", style = MaterialTheme.typography.titleLarge, color = TextOnPrimary)
+            Image(
+                painter = painterResource(R.drawable.ic_elderbridge_mark),
+                contentDescription = "ElderBridge bubble",
+                modifier = Modifier.size(36.dp)
+            )
         }
         Column {
             Text(
@@ -225,7 +231,7 @@ private fun BubbleMockup() {
             )
             Text(
                 text = "This bubble floats on top of any app",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp)
             )

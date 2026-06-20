@@ -4,7 +4,12 @@ import android.content.Intent
 import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,17 +18,19 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -33,82 +40,153 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.elderbridge.guardianos.R
 import com.elderbridge.guardianos.data.UserProfileStore
 import com.elderbridge.guardianos.services.OverlayService
 import com.elderbridge.guardianos.services.ScreenReaderService
-import com.elderbridge.guardianos.ui.theme.ActiveGreen
-import com.elderbridge.guardianos.ui.theme.ActiveGreenLight
+import com.elderbridge.guardianos.ui.theme.EbClay
+import com.elderbridge.guardianos.ui.theme.EbInkSoft
+import com.elderbridge.guardianos.ui.theme.EbNavy
+import com.elderbridge.guardianos.ui.theme.EbSage
+import com.elderbridge.guardianos.ui.theme.EbSurface
+import com.elderbridge.guardianos.ui.theme.EbSurfaceAlt
+import com.elderbridge.guardianos.ui.theme.NunitoFamily
 
 @Composable
 fun HomeScreen(onTryDemo: () -> Unit, onHistory: () -> Unit, onProfile: () -> Unit) {
     val context = LocalContext.current
     var isMonitoringEnabled by remember { mutableStateOf(UserProfileStore.isAssistantEnabled(context)) }
+    val userName = remember { UserProfileStore.load(context).fullName.ifBlank { "friend" } }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 28.dp, vertical = 56.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp)
     ) {
-        // App header
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = "ElderBridge",
-                style = MaterialTheme.typography.headlineLarge,
-                color = MaterialTheme.colorScheme.primary,
-                textAlign = TextAlign.Center
-            )
-            Text(
-                text = "Guardian Assistant",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 4.dp)
-            )
+        Spacer(modifier = Modifier.height(56.dp))
+
+        // Top row: wordmark + settings
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Image(
+                    painter = painterResource(R.drawable.ic_elderbridge_logo),
+                    contentDescription = "ElderBridge logo",
+                    modifier = Modifier.size(36.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "ElderBridge",
+                    fontFamily = NunitoFamily,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 24.sp,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            }
+            IconButton(
+                onClick = onProfile,
+                modifier = Modifier.size(56.dp)
+            ) {
+                Icon(
+                    painter = painterResource(android.R.drawable.ic_menu_preferences),
+                    contentDescription = "Settings",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
 
-        // Status indicator + toggle
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(32.dp)
-        ) {
-            StatusCircle(isActive = isMonitoringEnabled)
+        Spacer(modifier = Modifier.height(32.dp))
 
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        // Greeting
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Text(
+                    text = userName.first().uppercase(),
+                    fontFamily = NunitoFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 22.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(modifier = Modifier.width(16.dp))
+            Column {
+                Text(
+                    text = "Hello, $userName",
+                    style = MaterialTheme.typography.headlineLarge,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    text = "I am watching out for you.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        // Main status card with toggle
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .shadow(
+                    elevation = 8.dp,
+                    shape = RoundedCornerShape(24.dp),
+                    ambientColor = EbSage.copy(alpha = 0.15f),
+                    spotColor = EbSage.copy(alpha = 0.1f)
+                ),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(24.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
                         Text(
-                            text = "Assistant Monitoring",
+                            text = if (isMonitoringEnabled)
+                                "Assistant is watching"
+                            else
+                                "Assistant is resting",
                             style = MaterialTheme.typography.titleLarge,
-                            color = MaterialTheme.colorScheme.onBackground
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
                             text = if (isMonitoringEnabled)
-                                "Active — I am watching over your apps"
+                                "Your screens are being looked after."
                             else
-                                "Tap the switch to turn me on",
-                            style = MaterialTheme.typography.bodyMedium,
+                                "Tap the switch to turn me on.",
+                            style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 6.dp)
+                            modifier = Modifier.padding(top = 8.dp)
                         )
                     }
-                    Switch(
+                    ElderBridgeToggle(
                         checked = isMonitoringEnabled,
                         onCheckedChange = { enabled ->
                             if (enabled) {
@@ -147,84 +225,115 @@ fun HomeScreen(onTryDemo: () -> Unit, onHistory: () -> Unit, onProfile: () -> Un
                                 UserProfileStore.setAssistantEnabled(context, false)
                                 isMonitoringEnabled = false
                             }
-                        },
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = ActiveGreen,
-                            checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                        )
+                        }
                     )
                 }
             }
         }
 
-        // Demo entry point
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Button(
-                onClick = onTryDemo,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(64.dp),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Text(text = "Try a Demo", style = MaterialTheme.typography.labelLarge)
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                text = "See how the assistant explains forms",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            OutlinedButton(
-                onClick = onHistory,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Text(text = "View History", style = MaterialTheme.typography.labelLarge)
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = onProfile,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Text(text = "My Profile", style = MaterialTheme.typography.labelLarge)
-            }
-        }
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Reassurance
+        Text(
+            text = "You are protected on every screen.",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 8.dp)
+        )
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        // Navigation buttons
+        LargeNavButton(
+            label = "History",
+            iconResId = android.R.drawable.ic_menu_recent_history,
+            color = EbNavy,
+            onClick = onHistory
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        LargeNavButton(
+            label = "Profile",
+            iconResId = android.R.drawable.ic_menu_my_calendar,
+            color = EbClay,
+            onClick = onProfile
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // Footer
+        Text(
+            text = "ElderBridge GuardianOS",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.align(Alignment.CenterHorizontally)
+        )
+        Spacer(modifier = Modifier.height(24.dp))
     }
 }
 
 @Composable
-private fun StatusCircle(isActive: Boolean) {
-    val bgColor = if (isActive) ActiveGreenLight else MaterialTheme.colorScheme.surfaceVariant
-    val textColor = if (isActive) ActiveGreen else MaterialTheme.colorScheme.onSurfaceVariant
+private fun ElderBridgeToggle(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    val trackColor by animateColorAsState(
+        targetValue = if (checked) EbSage else EbSurfaceAlt,
+        animationSpec = spring(),
+        label = "track"
+    )
+    val thumbColor by animateColorAsState(
+        targetValue = if (checked) EbSurface else EbInkSoft,
+        animationSpec = spring(),
+        label = "thumb"
+    )
 
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+    Box(
+        modifier = Modifier
+            .width(96.dp)
+            .height(56.dp)
+            .clip(RoundedCornerShape(28.dp))
+            .background(trackColor)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { onCheckedChange(!checked) },
+        contentAlignment = Alignment.CenterStart
     ) {
         Box(
-            contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(120.dp)
+                .offset(x = if (checked) 44.dp else 4.dp)
+                .size(48.dp)
                 .clip(CircleShape)
-                .background(bgColor)
+                .background(thumbColor)
+        )
+    }
+}
+
+@Composable
+private fun LargeNavButton(label: String, iconResId: Int, color: Color, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(64.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            Icon(
+                painter = painterResource(iconResId),
+                contentDescription = null,
+                tint = color,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(modifier = Modifier.width(16.dp))
             Text(
-                text = if (isActive) "ON" else "OFF",
-                style = MaterialTheme.typography.headlineMedium,
-                color = textColor
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface
             )
         }
-        Text(
-            text = if (isActive) "Assistant is Active" else "Assistant is Off",
-            style = MaterialTheme.typography.bodyLarge,
-            color = textColor
-        )
     }
 }

@@ -1,5 +1,6 @@
 package com.elderbridge.guardianos.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -23,34 +25,33 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.elderbridge.guardianos.R
+import com.elderbridge.guardianos.ui.theme.EbSage
+import com.elderbridge.guardianos.ui.theme.EbSurface
 
 private data class OnboardingPage(
-    val emoji: String,
     val title: String,
     val body: String
 )
 
 private val pages = listOf(
     OnboardingPage(
-        emoji = "👋",
         title = "Welcome to ElderBridge",
-        body = "We help you understand health forms, government letters, and benefits — right on your phone."
+        body = "We help you understand health forms, government letters, and benefits, right on your phone."
     ),
     OnboardingPage(
-        emoji = "🔍",
         title = "We Explain Things",
         body = "When you open a confusing form or letter, we show a simple explanation in plain language."
     ),
     OnboardingPage(
-        emoji = "🔒",
         title = "Your Privacy is Safe",
         body = "We never read your passwords or security codes. Your personal information never leaves your phone."
     ),
     OnboardingPage(
-        emoji = "✅",
-        title = "You're Always in Control",
+        title = "You are Always in Control",
         body = "You can turn off the assistant at any time with a single tap on your home screen."
     )
 )
@@ -83,15 +84,17 @@ fun OnboardingScreen(onFinished: () -> Unit) {
             }
         }
 
-        // Main content — large emoji, bold title, plain body
+        // Main content
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.padding(vertical = 16.dp)
         ) {
-            Text(
-                text = page.emoji,
-                style = MaterialTheme.typography.displayLarge,
-                modifier = Modifier.padding(bottom = 36.dp)
+            Image(
+                painter = painterResource(R.drawable.ic_elderbridge_logo),
+                contentDescription = "ElderBridge",
+                modifier = Modifier
+                    .size(80.dp)
+                    .padding(bottom = 36.dp)
             )
             Text(
                 text = page.title,
@@ -108,7 +111,7 @@ fun OnboardingScreen(onFinished: () -> Unit) {
             )
         }
 
-        // Navigation — 64dp tall buttons for easy tapping
+        // Navigation
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Button(
                 onClick = {
@@ -117,7 +120,11 @@ fun OnboardingScreen(onFinished: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(64.dp),
-                shape = RoundedCornerShape(16.dp)
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = EbSage,
+                    contentColor = EbSurface
+                )
             ) {
                 Text(
                     text = if (currentPage < pages.lastIndex) "Next" else "Get Started",
@@ -133,7 +140,7 @@ fun OnboardingScreen(onFinished: () -> Unit) {
                 ) {
                     Text(
                         text = "Skip",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }

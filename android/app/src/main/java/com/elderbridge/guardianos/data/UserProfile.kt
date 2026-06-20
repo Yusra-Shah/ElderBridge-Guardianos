@@ -48,4 +48,24 @@ object UserProfileStore {
     fun isAssistantEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean("assistant_enabled", false)
+
+    fun isDarkModeEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean("dark_mode", false)
+
+    fun setDarkModeEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putBoolean("dark_mode", enabled)
+            .apply()
+    }
+
+    fun isSoundEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean("sound_enabled", false)
+
+    fun setSoundEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putBoolean("sound_enabled", enabled)
+            .apply()
+    }
 }

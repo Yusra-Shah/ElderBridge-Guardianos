@@ -1,0 +1,24 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+
+    <!-- Bridge arch: a gentle continuous curve with rounded ends -->
+    <path
+        android:pathData="M8,30 C8,14 24,4 24,14 C24,4 40,14 40,30"
+        android:strokeWidth="3.2"
+        android:strokeColor="#7C8A6B"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="@android:color/transparent" />
+
+    <!-- Supporting hand / calm smile beneath the arch -->
+    <path
+        android:pathData="M14,33 Q24,42 34,33"
+        android:strokeWidth="2.8"
+        android:strokeColor="#7C8A6B"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent" />
+
+</vector>

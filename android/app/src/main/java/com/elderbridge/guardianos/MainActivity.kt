@@ -4,9 +4,14 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.elderbridge.guardianos.data.UserProfileStore
 import com.elderbridge.guardianos.ui.screens.HistoryScreen
 import com.elderbridge.guardianos.ui.screens.HomeScreen
 import com.elderbridge.guardianos.ui.screens.OnboardingScreen
@@ -20,7 +25,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            ElderBridgeGuardianosTheme {
+            var isDarkMode by remember {
+                mutableStateOf(UserProfileStore.isDarkModeEnabled(this@MainActivity))
+            }
+
+            ElderBridgeGuardianosTheme(darkTheme = isDarkMode) {
                 val navController = rememberNavController()
                 NavHost(navController = navController, startDestination = "onboarding") {
                     composable("onboarding") {
@@ -51,7 +60,17 @@ class MainActivity : ComponentActivity() {
                         HistoryScreen(onBack = { navController.popBackStack() })
                     }
                     composable("profile") {
-                        ProfileScreen(onBack = { navController.popBackStack() })
+                        ProfileScreen(
+                            onBack = { navController.popBackStack() },
+                            isDarkMode = isDarkMode,
+                            onDarkModeChanged = { enabled ->
+                                UserProfileStore.setDarkModeEnabled(
+                                    this@MainActivity,
+                                    enabled
+                                )
+                                isDarkMode = enabled
+                            }
+                        )
                     }
                 }
             }
