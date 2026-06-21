@@ -1,0 +1,24 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp"
+    android:height="32dp"
+    android:viewportWidth="32"
+    android:viewportHeight="32">
+
+    <!-- Simplified bridge arch for the floating bubble -->
+    <path
+        android:pathData="M6,21 C6,10 16,3 16,10 C16,3 26,10 26,21"
+        android:strokeWidth="2.8"
+        android:strokeColor="#3F4A63"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="@android:color/transparent" />
+
+    <!-- Small gentle curve underneath -->
+    <path
+        android:pathData="M10,23 Q16,29 22,23"
+        android:strokeWidth="2.2"
+        android:strokeColor="#3F4A63"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent" />
+
+</vector>

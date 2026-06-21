@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="eb_ground">#FF211E1A</color>
+    <color name="eb_surface">#FF2B2722</color>
+    <color name="eb_surface_alt">#FF35302A</color>
+    <color name="eb_ink">#FFF0E9DD</color>
+    <color name="eb_ink_soft">#FFB7AC9D</color>
+    <color name="eb_sage">#FF9DB082</color>
+    <color name="eb_clay">#FFD98C63</color>
+    <color name="eb_ochre">#FFE6B65F</color>
+    <color name="eb_navy">#FF8593B3</color>
+    <color name="eb_line">#FF413A32</color>
+    <color name="eb_clay_strong">#FFD98C63</color>
+</resources>

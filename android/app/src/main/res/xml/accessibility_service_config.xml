@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Configuration for ScreenReaderService.
+
+  canRetrieveWindowContent: REQUIRED — without this, rootInActiveWindow returns null
+  and the service cannot read any screen content.
+
+  flagReportViewIds: exposes view resource IDs on nodes, which lets future AI logic
+  identify fields by type (e.g. android:id/edit_text_monthly_income).
+
+  Touch exploration is deliberately excluded — ElderBridge is not a screen reader
+  and must not interfere with the user's existing touch flow.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowContentChanged|typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagReportViewIds"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/accessibility_service_description"
+    android:notificationTimeout="100" />
