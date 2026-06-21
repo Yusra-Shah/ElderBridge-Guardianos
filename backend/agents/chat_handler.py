@@ -22,8 +22,10 @@ logger = logging.getLogger("elderbridge.chat")
 
 _AUTHENTICITY_QUESTIONS = re.compile(
     r"(is\s+this\s+(website|site|page)\s+(authentic|safe|real|legitimate|legit|genuine|official|trusted))"
+    r"|(is\s+this\s+(an?\s+)?(authentic|safe|real|legitimate|legit|genuine|official|trusted)\s+(website|site|page))"
     r"|(is\s+this\s+real)"
-    r"|(is\s+this\s+safe)",
+    r"|(is\s+this\s+safe)"
+    r"|(is\s+this\s+authentic)",
     re.IGNORECASE,
 )
 
@@ -34,16 +36,31 @@ for _domains in _OFFICIAL_DOMAINS.values():
     _ALL_OFFICIAL_DOMAINS.update(d.lower() for d in _domains)
 
 
-def _check_website_authenticity(question: str, screen_context: str) -> FinalDecision | None:
-    """Return an instant cached answer for website authenticity questions on known domains."""
+def _check_website_authenticity(
+    question: str,
+    screen_context: str,
+    messages: list[dict] | None = None,
+) -> FinalDecision | None:
+    """Return an instant cached answer for website authenticity questions on known domains.
+
+    Searches both the screen_context and all prior conversation messages for
+    .gov.pk domains so the fast-path works even when screen_context is empty
+    on follow-up turns.
+    """
     if not _AUTHENTICITY_QUESTIONS.search(question):
         return None
-    if not screen_context:
+
+    searchable = screen_context or ""
+    if messages:
+        for m in messages:
+            content = m.get("content", "")
+            if content:
+                searchable += " " + content
+
+    if not searchable.strip():
         return None
 
-    ctx_lower = screen_context.lower()
-
-    if _GOV_PK_RE.search(screen_context):
+    if _GOV_PK_RE.search(searchable):
         return FinalDecision(
             response_text=(
                 "Yes, this is an official Pakistani government website. The address "
@@ -55,6 +72,8 @@ def _check_website_authenticity(question: str, screen_context: str) -> FinalDeci
             next_steps=[],
             source_citations=[],
         )
+
+    ctx_lower = searchable.lower()
 
     for domain_list in _OFFICIAL_DOMAINS.values():
         for d in domain_list:
@@ -70,8 +89,8 @@ def _check_website_authenticity(question: str, screen_context: str) -> FinalDeci
                     source_citations=[],
                 )
 
-    domains_in_ctx = [m.group(1).lower() for m in _DOMAIN_RE.finditer(screen_context)
-                      if not screen_context[max(0, m.start()-1):m.start()].endswith("@")]
+    domains_in_ctx = [m_obj.group(1).lower() for m_obj in _DOMAIN_RE.finditer(searchable)
+                      if not searchable[max(0, m_obj.start()-1):m_obj.start()].endswith("@")]
     for d in domains_in_ctx:
         if not d.endswith(".gov.pk") and d not in _ALL_OFFICIAL_DOMAINS:
             for inst in _OFFICIAL_DOMAINS:
@@ -110,14 +129,19 @@ def _build_system_prompt(screen_context: str = "") -> str:
         "Answer the specific question asked, directly and simply.\n"
         "If the user says thank you, hello, goodbye, or similar, respond warmly and "
         "ask if they need anything else.\n"
-        "If asked about website authenticity, check if the URL contains .gov.pk and "
-        "answer yes or no directly.\n"
-        "Never mention OTP unless it appears in the screen context.\n"
+        "When checking if a website is authentic, look only for the domain in the browser "
+        "address bar at the top of the screen. Ignore URLs in the page body text. "
+        "If the address bar contains .gov.pk, the site IS authentic and official.\n"
+        "Never use the word OTP in any response. If you see OTP in the screen text, "
+        "describe it as 'a verification code' instead. The word OTP must not appear "
+        "anywhere in your response.\n"
         "Never quote text in square brackets like [OTP], [REDACTED_CODE], or [REDACTED_CNIC]. "
         "These are internal redaction markers, not real content. "
         "Say 'a verification code' or 'a private code' instead.\n"
         "Never tell the user to share a photo or upload an image.\n"
         "Never run scam detection on casual conversational messages.\n"
+        "Always respond in English only, even if the screen contains Urdu or "
+        "the user writes in Urdu. Never respond in Urdu or Roman Urdu.\n"
         "Keep responses under 60 words.\n"
         "Plain text only, no markdown.\n"
         "If you genuinely do not know something, say so honestly.\n"
@@ -128,9 +152,8 @@ def _build_system_prompt(screen_context: str = "") -> str:
 
 _CHAT_FALLBACK = FinalDecision(
     response_text=(
-        "I am sorry, I could not find the answer to your question right now. "
-        "Please try asking in a different way, or ask a trusted family member "
-        "or caregiver for help."
+        "I could not reach my knowledge just now. "
+        "Please try your question again in a moment."
     ),
     risk_flag=RiskLevel.NONE,
     next_steps=[],
@@ -146,6 +169,27 @@ _CHAT_CONTENT_FILTER_FALLBACK = FinalDecision(
     next_steps=[],
     source_citations=[],
 )
+
+
+def _warm_fallback(messages: list[dict] | None, question: str = "") -> FinalDecision:
+    """Build a fallback that references what the user actually asked."""
+    last_user_msg = question
+    if messages:
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                last_user_msg = m.get("content", "")
+                break
+    snippet = last_user_msg[:50].strip() if last_user_msg else "your question"
+    return FinalDecision(
+        response_text=(
+            f"I had trouble reaching my knowledge right now. "
+            f"Please try asking again in a moment, "
+            f"or tap Emergency if you need urgent help."
+        ),
+        risk_flag=RiskLevel.NONE,
+        next_steps=[],
+        source_citations=[],
+    )
 
 
 def handle_chat_question(
@@ -177,7 +221,7 @@ def handle_chat_question(
                 last_user_msg = m.get("content", "")
                 break
         if last_user_msg:
-            auth_answer = _check_website_authenticity(last_user_msg, screen_context)
+            auth_answer = _check_website_authenticity(last_user_msg, screen_context, messages)
             if auth_answer is not None:
                 return auth_answer
 
@@ -193,7 +237,7 @@ def handle_chat_question(
             return _CHAT_FALLBACK
 
         try:
-            response_text = call_llm_chat(llm_messages, max_tokens=512)
+            response_text = call_llm_chat(llm_messages, max_tokens=2048)
             if not response_text or not response_text.strip():
                 return _CHAT_FALLBACK
             return FinalDecision(
@@ -203,13 +247,13 @@ def handle_chat_question(
                 source_citations=[],
             )
         except ContentFilterError:
-            logger.warning("Chat content filter tripped, retrying without screen context")
+            logger.warning("Chat content filter tripped, retrying without screen context and truncated history")
             try:
+                user_assistant_msgs = [m for m in llm_messages if m["role"] in ("user", "assistant")]
+                recent = user_assistant_msgs[-4:] if len(user_assistant_msgs) > 4 else user_assistant_msgs
                 retry_messages = [{"role": "system", "content": _build_system_prompt("")}]
-                retry_messages.extend(
-                    m for m in llm_messages if m["role"] in ("user", "assistant")
-                )
-                response_text = call_llm_chat(retry_messages, max_tokens=512)
+                retry_messages.extend(recent)
+                response_text = call_llm_chat(retry_messages, max_tokens=2048)
                 if response_text and response_text.strip():
                     return FinalDecision(
                         response_text=response_text.strip(),
@@ -219,10 +263,10 @@ def handle_chat_question(
                     )
             except Exception as retry_exc:
                 logger.warning("Chat retry also failed: %s", retry_exc)
-            return _CHAT_CONTENT_FILTER_FALLBACK
+            return _warm_fallback(messages, question)
         except (LLMUnavailableError, Exception) as exc:
             logger.warning("Chat LLM call failed: %s", exc)
-            return _CHAT_FALLBACK
+            return _warm_fallback(messages, question)
 
     if not question or not question.strip():
         return _CHAT_FALLBACK
@@ -233,7 +277,7 @@ def handle_chat_question(
 
     system_prompt = _build_system_prompt(screen_context)
     try:
-        response_text = call_llm(system_prompt, question, max_tokens=512)
+        response_text = call_llm(system_prompt, question, max_tokens=2048)
         if not response_text or not response_text.strip():
             return _CHAT_FALLBACK
         return FinalDecision(
@@ -245,7 +289,7 @@ def handle_chat_question(
     except ContentFilterError:
         logger.warning("Chat content filter tripped (single-turn), retrying without context")
         try:
-            response_text = call_llm(_build_system_prompt(""), question, max_tokens=512)
+            response_text = call_llm(_build_system_prompt(""), question, max_tokens=2048)
             if response_text and response_text.strip():
                 return FinalDecision(
                     response_text=response_text.strip(),
@@ -255,7 +299,7 @@ def handle_chat_question(
                 )
         except Exception as retry_exc:
             logger.warning("Chat retry also failed: %s", retry_exc)
-        return _CHAT_CONTENT_FILTER_FALLBACK
+        return _warm_fallback(None, question)
     except (LLMUnavailableError, Exception) as exc:
         logger.warning("Chat LLM call failed: %s", exc)
-        return _CHAT_FALLBACK
+        return _warm_fallback(None, question)

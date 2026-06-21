@@ -50,7 +50,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from agents.chat_handler import handle_chat_question, _CHAT_FALLBACK
 from agents.emergency_scam_detector import detect_emergency_scam, EMERGENCY_SCAM_RESPONSE, EMERGENCY_SCAM_NEXT_STEPS
@@ -132,6 +132,71 @@ def is_official_gov_site(event: IncomingEvent) -> bool:
     is_browser = any(b in source for b in _BROWSER_APPS)
     has_gov = any(d in text for d in _GOV_DOMAINS)
     return is_browser and has_gov
+
+
+# ---------------------------------------------------------------------------
+# Pre-pipeline telecom promotional SMS bypass — legitimate marketing messages
+# from Pakistani mobile networks should not be flagged as scams.
+# ---------------------------------------------------------------------------
+
+_TELECOM_PROMO_BRANDS = [
+    "ufone", "jazz", "telenor", "zong", "upaisa", "jazzcash",
+    "jazz cash", "easypaisa", "mobilink",
+]
+
+_TELECOM_PROMO_SIGNALS = [
+    "bundle", "cashback", "recharge", "reactivate",
+    "t&cs apply", "terms and conditions", "data offer",
+    "free minutes", "free sms", "mb free", "gb free",
+]
+
+_TELECOM_DANGER_WORDS = [
+    "otp", "pin", "password", "cnic", "account number",
+    "send money", "transfer rs", "transfer pkr",
+]
+
+
+_SMS_APP_FRAGMENTS = [
+    "com.android.messaging", "com.google.android.apps.messaging",
+    "com.samsung.android.messaging", "com.miui.messaging",
+    "com.sonyericsson.conversations", "org.thoughtcrime.securesms",
+    "com.android.mms",
+]
+
+
+def _is_sms_source(source_app: str) -> bool:
+    source = source_app.lower()
+    return any(app in source for app in _SMS_APP_FRAGMENTS) or "sms" in source
+
+
+def is_telecom_promotional(event: IncomingEvent) -> bool:
+    """Return True if the event is a legitimate telecom promotional SMS."""
+    text = (event.redacted_text or "").lower()
+
+    if not _is_sms_source(event.source_app):
+        return False
+
+    has_brand = any(b in text for b in _TELECOM_PROMO_BRANDS)
+    has_promo = any(p in text for p in _TELECOM_PROMO_SIGNALS)
+    has_danger = any(d in text for d in _TELECOM_DANGER_WORDS)
+
+    return has_brand and has_promo and not has_danger
+
+
+_TELECOM_PROMO_RESPONSE = FinalDecision(
+    response_text=(
+        "This is a promotional message from your mobile network. "
+        "It is advertising a bundle, cashback, or prize offer. "
+        "You do not need to do anything unless you want to join. "
+        "If you did not ask for this, you can ignore it."
+    ),
+    risk_flag=RiskLevel.NONE,
+    next_steps=[
+        "Read the offer if interested",
+        "Ignore if not interested",
+    ],
+    source_citations=[],
+)
 
 
 logger = logging.getLogger("elderbridge")
@@ -322,6 +387,10 @@ async def analyze_event(event: IncomingEvent, request: Request) -> FinalDecision
                 source_citations=[],
             )
 
+        if is_telecom_promotional(event):
+            logger.info("analyze-event | telecom promo bypass for user=%s", event.user_id)
+            return _TELECOM_PROMO_RESPONSE
+
         if detect_financial_fraud(event.redacted_text):
             logger.warning("analyze-event | financial fraud detected for user=%s", event.user_id)
             return FinalDecision(
@@ -473,12 +542,18 @@ class ChatRequest(BaseModel):
     screen_context: str = Field(
         default="",
         validation_alias=AliasChoices("screen_context", "screenContext"),
-        max_length=2048,
     )
     question: str = Field(default="", max_length=1024)
 
+    @field_validator("screen_context")
+    @classmethod
+    def truncate_screen_context(cls, v: str) -> str:
+        if v and len(v) > 2048:
+            return v[:2048]
+        return v
 
-_CHAT_TIMEOUT = 12.0
+
+_CHAT_TIMEOUT = 30.0
 
 
 @app.post(

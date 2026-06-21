@@ -22,6 +22,11 @@ OUTPUT_FILTERS: list[Tuple[re.Pattern, str]] = [
     (re.compile(r"\[card number hidden\]"), "a card number"),
     (re.compile(r"\[account number hidden\]"), "an account number"),
     (re.compile(r"\[REDACTED[^\]]*\]"), "private information"),
+    # Plain-text OTP word — LLM generates this from screen context
+    (re.compile(r"\bOTP code\b", re.IGNORECASE), "a verification code"),
+    (re.compile(r"\bOTP\b"), "a verification code"),
+    (re.compile(r"\bone-time password\b", re.IGNORECASE), "a verification code"),
+    (re.compile(r"\bone time password\b", re.IGNORECASE), "a verification code"),
     # Sensitive data in AI output
     (re.compile(r"(?i)(otp|one.time.code|verification code|pin)[:\s]+\d{4,8}"), "a one-time code"),
     (re.compile(r"(?i)code is[:\s]+\d{4,8}"), "a code"),

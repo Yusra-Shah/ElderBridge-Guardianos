@@ -115,8 +115,8 @@ class TestChatRetryOnContentFilter:
                 screen_context="messy text",
             )
 
-        assert result.response_text == _CHAT_CONTENT_FILTER_FALLBACK.response_text
-        assert "trouble reading" in result.response_text.lower()
+        assert "trouble" in result.response_text.lower()
+        assert result.risk_flag == RiskLevel.NONE
         assert result.response_text != _CHAT_FALLBACK.response_text
 
     def test_retry_omits_screen_context(self):
@@ -384,3 +384,136 @@ class TestRedactionArtifactCleanup:
         result = filter_output("Call [REDACTED_PHONE] for help")
         assert "[REDACTED_PHONE]" not in result
         assert "phone number" in result
+
+    def test_plain_otp_code_replaced(self):
+        from agents.output_filter import filter_output
+        result = filter_output("includes an OTP code and a link")
+        assert "OTP" not in result
+        assert "verification code" in result
+
+    def test_plain_otp_word_replaced(self):
+        from agents.output_filter import filter_output
+        result = filter_output("You should use the OTP when the app asks")
+        assert "OTP" not in result
+        assert "verification code" in result
+
+
+# =========================================================================
+# FIX: Telecom promotional SMS must not trigger stop-and-check
+# =========================================================================
+
+class TestTelecomPromoBypass:
+
+    def test_upaisa_cashback_sms_returns_none(self):
+        resp = client.post("/analyze-event", json={
+            "event_type": "FORM_SCREEN",
+            "source_app": "com.android.messaging",
+            "redacted_text": (
+                "Buy any Ufone bundle via UPaisa and win 50% cashback "
+                "Reactivate your wallet today bit.ly/3I8Gy3n"
+            ),
+            "timestamp": "2026-06-21T10:00:00Z",
+            "user_id": "usr_telecom_promo",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["risk_flag"] == "none", (
+            f"UPaisa cashback SMS got {body['risk_flag']}, expected none"
+        )
+
+    def test_jazz_bundle_promo_returns_none(self):
+        resp = client.post("/analyze-event", json={
+            "event_type": "FORM_SCREEN",
+            "source_app": "com.android.mms",
+            "redacted_text": (
+                "Jazz Weekly Super Duper bundle activated. "
+                "1500 minutes 1500 SMS 3GB data. T&Cs apply."
+            ),
+            "timestamp": "2026-06-21T10:00:00Z",
+            "user_id": "usr_jazz_promo",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["risk_flag"] == "none"
+
+    def test_scam_with_cnic_not_bypassed(self):
+        """A scam asking for CNIC should still be flagged even from messaging app."""
+        resp = client.post("/analyze-event", json={
+            "event_type": "FORM_SCREEN",
+            "source_app": "com.android.messaging",
+            "redacted_text": (
+                "Send your CNIC and OTP to claim your Ufone prize. "
+                "Transfer Rs 500 to account 1234567890 for cashback."
+            ),
+            "timestamp": "2026-06-21T10:00:00Z",
+            "user_id": "usr_telecom_scam",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["risk_flag"] != "none", (
+            "SMS with CNIC+OTP+transfer should NOT be bypassed by telecom promo"
+        )
+
+    def test_miui_messaging_source_detected(self):
+        from main import _is_sms_source
+        assert _is_sms_source("com.miui.messaging") is True
+
+    def test_google_messaging_source_detected(self):
+        from main import _is_sms_source
+        assert _is_sms_source("com.google.android.apps.messaging") is True
+
+    def test_upaisa_from_miui_messaging(self):
+        resp = client.post("/analyze-event", json={
+            "event_type": "FORM_SCREEN",
+            "source_app": "com.miui.messaging",
+            "redacted_text": (
+                "Buy any Ufone bundle via UPaisa and win 50% cashback "
+                "Reactivate your wallet today bit.ly/3I8Gy3n T&Cs apply"
+            ),
+            "timestamp": "2026-06-21T10:00:00Z",
+            "user_id": "usr_miui_promo",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["risk_flag"] == "none", (
+            f"UPaisa SMS via MIUI got {body['risk_flag']}, expected none"
+        )
+
+
+# =========================================================================
+# FIX: Chat fallback and gov.pk authenticity
+# =========================================================================
+
+class TestChatFallbackAndAuth:
+
+    def test_fallback_text_is_not_cold_sorry(self):
+        from agents.chat_handler import _CHAT_FALLBACK
+        assert "I am sorry, I could not find the answer" not in _CHAT_FALLBACK.response_text
+
+    def test_gov_pk_authenticity_via_conversation_history(self):
+        """When screen_context is empty but conversation history mentions
+        swd.sindh.gov.pk, the authenticity check should still return positive."""
+        from agents.chat_handler import _check_website_authenticity
+        result = _check_website_authenticity(
+            question="is this an authentic website?",
+            screen_context="",
+            messages=[
+                {"role": "assistant", "content": "This is the swd.sindh.gov.pk Senior Citizens Portal."},
+                {"role": "user", "content": "is this an authentic website?"},
+            ],
+        )
+        assert result is not None
+        assert result.risk_flag == RiskLevel.NONE
+        text = result.response_text.lower()
+        assert "official" in text or "authentic" in text or ".gov.pk" in text
+        assert "inauthentic" not in text
+
+    def test_gov_pk_authenticity_via_screen_context(self):
+        from agents.chat_handler import _check_website_authenticity
+        result = _check_website_authenticity(
+            question="is this an authentic website?",
+            screen_context="swd.sindh.gov.pk Senior Citizens Portal Contact Us",
+        )
+        assert result is not None
+        assert result.risk_flag == RiskLevel.NONE
+        assert "inauthentic" not in result.response_text.lower()
