@@ -64,6 +64,76 @@ from schemas.decision_schema import FinalDecision, RiskLevel
 from schemas.event_schema import EventType, IncomingEvent
 from secure_logging.secure_logger import setup_secure_logging
 
+
+# ---------------------------------------------------------------------------
+# Pre-pipeline safe-document bypass — runs before ANY agent touches the event.
+# Medical reports, lab results, and clinical documents from mail apps must
+# never be flagged as scams regardless of what keywords they contain.
+# ---------------------------------------------------------------------------
+
+_MEDICAL_KEYWORDS = [
+    "clinical laboratory", "aga khan", "laboratory@aku",
+    "specimen", "patient name", "lab report", "test result",
+    "medical report", "hospital report", "discharge summary",
+    "prescription", "diagnostic report",
+]
+
+_MAIL_SOURCES = ["gmail", "mail", "outlook", "yahoo", "email", "com.google.android.gm"]
+
+
+def is_safe_medical_document(event: IncomingEvent) -> bool:
+    """Return True if the event is a medical document from a mail app."""
+    text = (event.redacted_text or "").lower()
+    source = (event.source_app or "").lower()
+    event_type = (event.event_type.value if event.event_type else "").lower()
+
+    is_mail = any(s in source for s in _MAIL_SOURCES) or event_type == "document"
+    has_medical = any(kw in text for kw in _MEDICAL_KEYWORDS)
+
+    return is_mail and has_medical
+
+
+_SAFE_MEDICAL_RESPONSE = FinalDecision(
+    response_text=(
+        "This is a medical report or lab result sent to you by email. "
+        "It is a normal clinical document. Check the report for your "
+        "test results and the doctor's notes. If you have questions "
+        "about the results, contact your doctor or the hospital."
+    ),
+    risk_flag=RiskLevel.NONE,
+    next_steps=[
+        "Open the attached PDF to see your results",
+        "Contact your doctor if you have questions",
+    ],
+    source_citations=[],
+)
+
+
+# ---------------------------------------------------------------------------
+# Post-pipeline gov site flag override — lets the LLM produce a helpful
+# response body but forces risk_flag=none so the header does not say
+# "Stop and check" for legitimate government websites.
+# ---------------------------------------------------------------------------
+
+_BROWSER_APPS = ["chrome", "firefox", "browser", "com.android.chrome", "org.mozilla"]
+
+_GOV_DOMAINS = [
+    ".gov.pk", "nadra.gov.pk", "fbr.gov.pk", "sbp.org.pk",
+    "pass.gov.pk", "ehsaas.gov.pk", "swd.sindh.gov.pk",
+    "punjab.gov.pk", "kp.gov.pk", "balochistan.gov.pk",
+    "pakpost.gov.pk", "pta.gov.pk", "secp.gov.pk",
+]
+
+
+def is_official_gov_site(event: IncomingEvent) -> bool:
+    """Return True if the event is from a browser showing an official .gov.pk site."""
+    text = (event.redacted_text or "").lower()
+    source = (event.source_app or "").lower()
+    is_browser = any(b in source for b in _BROWSER_APPS)
+    has_gov = any(d in text for d in _GOV_DOMAINS)
+    return is_browser and has_gov
+
+
 logger = logging.getLogger("elderbridge")
 
 # ---------------------------------------------------------------------------
@@ -279,6 +349,10 @@ async def analyze_event(event: IncomingEvent, request: Request) -> FinalDecision
                 source_citations=[],
             )
 
+        if is_safe_medical_document(event):
+            logger.info("analyze-event | safe medical document bypass for user=%s", event.user_id)
+            return _SAFE_MEDICAL_RESPONSE
+
         if not event.redacted_text.strip():
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -330,6 +404,17 @@ async def analyze_event(event: IncomingEvent, request: Request) -> FinalDecision
                     _response_cache[key] = (time.time(), partial_result)
                     return partial_result
             return _SAFE_FALLBACK
+
+        if is_official_gov_site(event) and result.risk_flag in (
+            RiskLevel.STOP_AND_VERIFY, RiskLevel.VERIFY_FIRST, RiskLevel.CAUTION,
+        ):
+            logger.info("analyze-event | gov site flag override for user=%s", event.user_id)
+            result = FinalDecision(
+                response_text=result.response_text,
+                risk_flag=RiskLevel.NONE,
+                next_steps=[],
+                source_citations=result.source_citations,
+            )
 
         _response_cache[key] = (time.time(), result)
         return result

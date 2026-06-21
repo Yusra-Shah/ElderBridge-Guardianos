@@ -76,6 +76,9 @@ _MEDIA_APPS = [
     "com.facebook.katana", "com.twitter.android", "com.tiktok.android",
     "com.google.android.apps.maps", "com.weather.app",
     "com.google.android.apps.photos",
+    "com.discord", "org.telegram.messenger", "com.snapchat.android",
+    "com.reddit.frontpage", "com.linkedin.android",
+    "com.google.android.youtube",
 ]
 
 _BANKING_APPS = [

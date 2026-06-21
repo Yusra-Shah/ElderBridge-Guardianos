@@ -67,6 +67,18 @@ _SAFE_APP_SKIP_KEYWORDS = {
     "password", "otp", "[redacted_otp]", "transfer", "send money",
 }
 
+# Social and media apps where normal navigation content should never trigger
+# scam keyword escalation.  Scam content FROM these apps (e.g. a phishing DM)
+# is caught by the pre-pipeline fraud/phishing/scam detectors in main.py,
+# not by keyword escalation here.
+_SOCIAL_MEDIA_APPS = [
+    "com.discord", "org.telegram.messenger", "com.twitter.android",
+    "com.facebook.katana", "com.instagram.android", "com.tiktok.android",
+    "com.snapchat.android", "com.reddit.frontpage", "com.linkedin.android",
+    "com.google.android.youtube", "com.google.android.apps.maps",
+    "com.google.android.apps.photos",
+]
+
 # Baseline risk by event category.
 # FORM_SCREEN and DOCUMENT start at NONE — they are help requests, not threats.
 _EVENT_BASE_RISK: dict[EventType, RiskLevel] = {
@@ -222,6 +234,13 @@ def _compute_baseline(event: IncomingEvent) -> tuple[RiskLevel, str, list[str]]:
     )
 
     is_safe_document = any(p.search(event.redacted_text) for p in _COMPILED_SAFE)
+
+    is_social_media = any(
+        pkg in event.source_app.lower() for pkg in _SOCIAL_MEDIA_APPS
+    )
+
+    if is_social_media:
+        return current, str(_RESPONSE_TEMPLATES[current]["response_text"]), list(_RESPONSE_TEMPLATES[current]["next_steps"])  # type: ignore[arg-type]
 
     for keyword, level in _KEYWORD_RULES:
         if is_safe_app and keyword in _SAFE_APP_SKIP_KEYWORDS:

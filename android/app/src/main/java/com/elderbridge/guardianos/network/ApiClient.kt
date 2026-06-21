@@ -34,7 +34,7 @@ object ApiClient {
             .readTimeout(180, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
             .apply {
-                // Body-level logging only in debug builds — never in release
+                // Body-level logging onllllly in debug builds — never in release
                 if (BuildConfig.DEBUG) {
                     addInterceptor(HttpLoggingInterceptor().apply {
                         level = HttpLoggingInterceptor.Level.BODY

@@ -217,3 +217,170 @@ class TestSafeDocumentGuard:
         )
         decision = run_graph(event)
         assert decision.risk_flag != RiskLevel.STOP_AND_VERIFY
+
+
+# =========================================================================
+# RC3: Pre-pipeline safe medical document bypass via /analyze-event API
+# =========================================================================
+
+class TestPrePipelineMedicalBypass:
+    """The AKU lab email must return risk_flag=none via the API, not just
+    through the graph node guard. This tests the pre-pipeline short circuit
+    in main.py that fires before any agents run."""
+
+    def test_aku_lab_email_returns_none_via_api(self):
+        resp = client.post("/analyze-event", json={
+            "event_type": "FORM_SCREEN",
+            "source_app": "com.google.android.gm",
+            "redacted_text": (
+                "Clinical Laboratory Aga Khan University Hospital "
+                "patient name Mrs Yousra specimen UCS test result"
+            ),
+            "timestamp": "2026-06-21T10:00:00Z",
+            "user_id": "usr_medical_bypass",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["risk_flag"] == "none", (
+            f"AKU lab email got risk_flag={body['risk_flag']}, expected none"
+        )
+
+    def test_aku_lab_email_response_is_calm(self):
+        resp = client.post("/analyze-event", json={
+            "event_type": "FORM_SCREEN",
+            "source_app": "com.google.android.gm",
+            "redacted_text": (
+                "Clinical Laboratory Aga Khan University Hospital "
+                "patient name Mrs Yousra specimen UCS test result "
+                "laboratory@aku.edu"
+            ),
+            "timestamp": "2026-06-21T10:00:00Z",
+            "user_id": "usr_medical_bypass2",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["risk_flag"] == "none"
+        assert "medical report" in body["response_text"].lower()
+        assert "stop" not in body["response_text"].lower()
+
+    def test_non_medical_gmail_still_flagged(self):
+        """A scam SMS forwarded via Gmail should still be flagged."""
+        resp = client.post("/analyze-event", json={
+            "event_type": "FORM_SCREEN",
+            "source_app": "com.google.android.gm",
+            "redacted_text": (
+                "You have won a lucky draw prize of Rs 500000. "
+                "Call this number to claim your reward immediately."
+            ),
+            "timestamp": "2026-06-21T10:00:00Z",
+            "user_id": "usr_medical_bypass3",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["risk_flag"] != "none", (
+            "Scam in Gmail should NOT be bypassed by medical check"
+        )
+
+
+# =========================================================================
+# FIX: Discord and social apps must not trigger stop-and-check
+# =========================================================================
+
+class TestSocialAppLowSignal:
+
+    def test_discord_hello_threads_not_flagged(self):
+        resp = client.post("/analyze-event", json={
+            "event_type": "FORM_SCREEN",
+            "source_app": "com.discord",
+            "redacted_text": (
+                "Micky started a thread Hello there are no messages "
+                "in this thread Create Thread"
+            ),
+            "timestamp": "2026-06-21T10:00:00Z",
+            "user_id": "usr_discord",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["risk_flag"] != "stop_and_verify", (
+            f"Discord Hello thread got {body['risk_flag']}, expected not stop_and_verify"
+        )
+
+    def test_telegram_nav_not_flagged(self):
+        resp = client.post("/analyze-event", json={
+            "event_type": "FORM_SCREEN",
+            "source_app": "org.telegram.messenger",
+            "redacted_text": "Chats Groups Channels Settings New Message",
+            "timestamp": "2026-06-21T10:00:00Z",
+            "user_id": "usr_telegram",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["risk_flag"] != "stop_and_verify"
+
+
+# =========================================================================
+# FIX: .gov.pk sites must not get stop-and-check risk flag
+# =========================================================================
+
+class TestGovSiteFlagOverride:
+
+    def test_swd_sindh_gov_pk_returns_none(self):
+        resp = client.post("/analyze-event", json={
+            "event_type": "FORM_SCREEN",
+            "source_app": "com.android.chrome",
+            "redacted_text": (
+                "swd.sindh.gov.pk Senior Citizens Portal Contact Us "
+                "Jobs FAQ Home About Us Projects Downloads Complaint Form"
+            ),
+            "timestamp": "2026-06-21T10:00:00Z",
+            "user_id": "usr_govsite",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["risk_flag"] == "none", (
+            f"swd.sindh.gov.pk got {body['risk_flag']}, expected none"
+        )
+
+    def test_non_gov_browser_still_flagged(self):
+        """A phishing site in Chrome should still be flagged."""
+        resp = client.post("/analyze-event", json={
+            "event_type": "FORM_SCREEN",
+            "source_app": "com.android.chrome",
+            "redacted_text": (
+                "Congratulations you won a lucky draw prize. "
+                "Enter your CNIC and bank details to claim Rs 500000. "
+                "Click here to register now."
+            ),
+            "timestamp": "2026-06-21T10:00:00Z",
+            "user_id": "usr_phishing_chrome",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["risk_flag"] != "none", (
+            "Phishing in Chrome should NOT be bypassed by gov site check"
+        )
+
+
+# =========================================================================
+# FIX: [OTP] redaction artifact must not leak into response text
+# =========================================================================
+
+class TestRedactionArtifactCleanup:
+
+    def test_otp_bracket_replaced(self):
+        from agents.output_filter import filter_output
+        result = filter_output("[OTP] part suggests a code")
+        assert "[OTP]" not in result
+        assert "verification code" in result or "code" in result
+
+    def test_redacted_cnic_replaced(self):
+        from agents.output_filter import filter_output
+        result = filter_output("The [REDACTED_CNIC] field is for your ID")
+        assert "[REDACTED_CNIC]" not in result
+        assert "ID number" in result
+
+    def test_redacted_phone_replaced(self):
+        from agents.output_filter import filter_output
+        result = filter_output("Call [REDACTED_PHONE] for help")
+        assert "[REDACTED_PHONE]" not in result
+        assert "phone number" in result

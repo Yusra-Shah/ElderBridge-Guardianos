@@ -6,6 +6,23 @@ import re
 from typing import Tuple
 
 OUTPUT_FILTERS: list[Tuple[re.Pattern, str]] = [
+    # Redaction artifact cleanup — internal markers must never reach the user
+    (re.compile(r"\[OTP\]"), "a verification code"),
+    (re.compile(r"\[REDACTED_OTP\]"), "a verification code"),
+    (re.compile(r"\[redacted_otp\]"), "a verification code"),
+    (re.compile(r"\[REDACTED_CODE\]"), "a code"),
+    (re.compile(r"\[REDACTED_CNIC\]"), "an ID number"),
+    (re.compile(r"\[redacted_cnic\]"), "an ID number"),
+    (re.compile(r"\[REDACTED_CARD\]"), "a card number"),
+    (re.compile(r"\[REDACTED_EMAIL\]"), "an email address"),
+    (re.compile(r"\[REDACTED_PHONE\]"), "a phone number"),
+    (re.compile(r"\[REDACTED_IBAN\]"), "an account number"),
+    (re.compile(r"\[REDACTED_TOKEN\]"), "a token"),
+    (re.compile(r"\[ID number hidden\]"), "an ID number"),
+    (re.compile(r"\[card number hidden\]"), "a card number"),
+    (re.compile(r"\[account number hidden\]"), "an account number"),
+    (re.compile(r"\[REDACTED[^\]]*\]"), "private information"),
+    # Sensitive data in AI output
     (re.compile(r"(?i)(otp|one.time.code|verification code|pin)[:\s]+\d{4,8}"), "a one-time code"),
     (re.compile(r"(?i)code is[:\s]+\d{4,8}"), "a code"),
     (re.compile(r"(?i)pin is[:\s]+\d{4,8}"), "a PIN"),
@@ -13,11 +30,12 @@ OUTPUT_FILTERS: list[Tuple[re.Pattern, str]] = [
     (re.compile(r"(?i)(the|your) (otp|code|pin) is \d{4,8}"), "the code"),
     (re.compile(r"(?i)(otp|code|pin)\s+is\s+\d{4,8}"), "code"),
     (re.compile(r"(?i)(your|the) code[:\s]+\d{4,8}"), "your code"),
-    (re.compile(r"\d{5}-\d{7}-\d"), "[ID number hidden]"),
-    (re.compile(r"\d{4}[\s\-]\d{4}[\s\-]\d{4}[\s\-]\d{4}"), "[card number hidden]"),
+    (re.compile(r"\d{5}-\d{7}-\d"), "an ID number"),
+    (re.compile(r"\d{4}[\s\-]\d{4}[\s\-]\d{4}[\s\-]\d{4}"), "a card number"),
     (re.compile(r"(?i)password is[:\s]+\S+"), "your password"),
     (re.compile(r"(?i)the password[:\s]+\S+"), "the password"),
-    (re.compile(r"PK\d{2}[A-Z]{4}\d{16}"), "[account number hidden]"),
+    (re.compile(r"PK\d{2}[A-Z]{4}\d{16}"), "an account number"),
+    # Action-taking language suppression
     (re.compile(r"(?i)I (will|am going to|can) (click|tap|press|submit|pay|transfer|fill)"), "You should"),
     (re.compile(r"(?i)let me (click|tap|press|submit|pay|transfer)"), "You can"),
     (re.compile(r"(?i)I (have|will have) (clicked|tapped|submitted|paid|transferred)"), ""),
